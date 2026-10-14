@@ -8,13 +8,14 @@ MAX_FUNDING_ATTEMPTS=30
 
 # 1. Setup Network in CLI
 echo "Configuring stellar-cli network..."
-stellar network add --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" local || true
+stellar network add local --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" || true
 
 # 2. Generate and Fund Identities
 echo "Generating and funding identities..."
 for name in deployer keeper creator; do
   stellar keys generate --network local "$name" || true
-  address="$(stellar keys public-key "$name")"
+  address="$(stellar keys address "$name" 2>/dev/null || stellar keys public-key "$name")"
+  echo "Funding $name ($address)..."
   attempt=1
   until curl -fsS "http://localhost:8000/friendbot?addr=$address" > /dev/null; do
     if [ "$attempt" -ge "$MAX_FUNDING_ATTEMPTS" ]; then
@@ -25,8 +26,9 @@ for name in deployer keeper creator; do
     attempt=$((attempt + 1))
     sleep 5
   done
+  echo "Funded $name!"
 done
-sleep 5
+sleep 6
 
 # 3. Build Contracts
 echo "Building contracts..."
@@ -67,7 +69,12 @@ done
 
 if [ -z "$CONTRACT_ID" ]; then
   echo "::error::Failed to deploy SoroTask contract after multiple attempts"
-  docker logs soroban-rpc --tail 100 || true
+  echo "=== docker exec supervisorctl status ==="
+  docker exec soroban-rpc supervisorctl status || true
+  echo "=== docker exec stellar-core logs ==="
+  docker exec soroban-rpc supervisorctl tail -200 stellar-core || true
+  echo "=== docker exec stellar-rpc logs ==="
+  docker exec soroban-rpc supervisorctl tail -200 stellar-rpc || true
   exit 1
 fi
 echo "CONTRACT_ID: $CONTRACT_ID"

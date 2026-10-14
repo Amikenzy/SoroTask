@@ -17,7 +17,7 @@ jobs:
 
       - name: Start Soroban RPC (stellar/quickstart)
         run: |
-          docker run -d --name soroban-rpc -p 8000:8000 stellar/quickstart:latest --local --enable-soroban-rpc --limits testnet
+          docker run -d --name soroban-rpc -p 8000:8000 stellar/quickstart:latest --local --enable-soroban-rpc --limits testnet --logs
 
       - name: Check for Conflict Markers
         run: |
@@ -71,6 +71,11 @@ jobs:
             echo "Waiting... ($i/30)"
             sleep 3
           done
+          echo "Network details:"
+          curl -s -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":"1","method":"getNetwork"}' http://localhost:8000/soroban/rpc || true
+          echo ""
+          curl -s -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":"1","method":"getLatestLedger"}' http://localhost:8000/soroban/rpc || true
+          echo ""
 
       - name: Deploy Contracts & Initialize Environment
         # No suppression (#1213): contract setup failure must fail the job.
