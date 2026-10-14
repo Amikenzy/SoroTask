@@ -29,9 +29,14 @@ done
 
 # 3. Build Contracts
 echo "Building contracts..."
-(cd contract && cargo build --target wasm32v1-none --release)
+if [ ! -f "target/wasm32v1-none/release/soro_task_contract.wasm" ] && [ ! -f "contract/target/wasm32v1-none/release/soro_task_contract.wasm" ]; then
+  (cd contract && stellar contract build --locked)
+fi
 
 WASM_PATH="contract/target/wasm32v1-none/release/soro_task_contract.wasm"
+if [ ! -f "$WASM_PATH" ]; then
+  WASM_PATH="target/wasm32v1-none/release/soro_task_contract.wasm"
+fi
 
 # 4. Deploy Main Contract
 echo "Deploying SoroTask contract..."
