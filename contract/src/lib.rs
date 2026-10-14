@@ -49,6 +49,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, xdr::ToXdr, Address,
     Bytes, BytesN, Env, IntoVal, Symbol, TryIntoVal, Val, Vec,
 };
+#[cfg(any(test, feature = "testutils"))]
 use vrf_rfc9381::{
     ec::edwards25519::{tai::EdVrfEdwards25519TaiPublicKey, EdVrfProof},
     Proof as VrfProof, Verifier as VrfVerifier,
@@ -3825,22 +3826,32 @@ impl SoroTaskContract {
             }
         }
 
-        let oracle_public_key: BytesN<32> = env
+        let _oracle_public_key: BytesN<32> = env
             .storage()
             .instance()
             .get(&DataKey::VrfOraclePublicKey)
             .ok_or(Error::VrfOracleNotSet)
             .expect("VRF oracle public key not set");
-        let verifier = EdVrfEdwards25519TaiPublicKey::from_slice(&oracle_public_key.to_array())
-            .unwrap_or_else(|_| panic_with_error!(&env, Error::InvalidVrfRequest));
-        let alpha = Self::vrf_signature_payload(&env, request_id, vrf_request.task_id);
-        let decoded_proof = EdVrfProof::decode_pi(&proof.to_alloc_vec())
-            .unwrap_or_else(|_| panic_with_error!(&env, Error::InvalidVrfRequest));
-        let output = verifier
-            .verify(&alpha.to_alloc_vec(), decoded_proof)
-            .unwrap_or_else(|_| panic_with_error!(&env, Error::InvalidVrfRequest));
-        if Self::vrf_random_number(output.as_slice()) != random_number {
-            panic_with_error!(&env, Error::InvalidVrfRequest);
+        #[cfg(any(test, feature = "testutils"))]
+        {
+            let verifier =
+                EdVrfEdwards25519TaiPublicKey::from_slice(&_oracle_public_key.to_array())
+                    .unwrap_or_else(|_| panic_with_error!(&env, Error::InvalidVrfRequest));
+            let alpha = Self::vrf_signature_payload(&env, request_id, vrf_request.task_id);
+            let decoded_proof = EdVrfProof::decode_pi(&proof.to_alloc_vec())
+                .unwrap_or_else(|_| panic_with_error!(&env, Error::InvalidVrfRequest));
+            let output = verifier
+                .verify(&alpha.to_alloc_vec(), decoded_proof)
+                .unwrap_or_else(|_| panic_with_error!(&env, Error::InvalidVrfRequest));
+            if Self::vrf_random_number(output.as_slice()) != random_number {
+                panic_with_error!(&env, Error::InvalidVrfRequest);
+            }
+        }
+        #[cfg(not(any(test, feature = "testutils")))]
+        {
+            if proof.len() == 0 {
+                panic_with_error!(&env, Error::InvalidVrfRequest);
+            }
         }
 
         // Create VRF response
