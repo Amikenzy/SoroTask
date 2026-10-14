@@ -39,44 +39,54 @@ if [ ! -f "$WASM_PATH" ]; then
   WASM_PATH="target/wasm32v1-none/release/soro_task_contract.wasm"
 fi
 
-# 4. Install WASM & Deploy Main Contract
-echo "Installing SoroTask contract WASM..."
+# 4. Deploy Main Contract
+echo "Deploying SoroTask contract..."
 stellar contract optimize --wasm "$WASM_PATH" || true
 if [ -f "${WASM_PATH%.wasm}.optimized.wasm" ]; then
   WASM_PATH="${WASM_PATH%.wasm}.optimized.wasm"
 fi
 echo "Using contract WASM at: $WASM_PATH"
 
-stellar --very-verbose contract install \
-  --wasm "$WASM_PATH" \
-  --source deployer \
-  --network local > /tmp/wasm_hash.txt || {
-    echo "Contract install failed! Checking docker logs for soroban-rpc:"
-    docker logs soroban-rpc --tail 100 || true
-    exit 1
-}
-WASM_HASH=$(cat /tmp/wasm_hash.txt | tail -1)
-echo "WASM_HASH: $WASM_HASH"
+CONTRACT_ID=""
+for attempt in {1..5}; do
+  echo "Attempt $attempt deploying SoroTask contract..."
+  DEPLOY_OUTPUT=$(stellar contract deploy \
+    --wasm "$WASM_PATH" \
+    --source deployer \
+    --network local \
+    --fee 10000000 2>&1 || true)
+  echo "$DEPLOY_OUTPUT"
+  CONTRACT_ID=$(printf '%s\n' "$DEPLOY_OUTPUT" | grep -o 'C[0-9A-Z]\{55\}' | tail -1 || true)
+  if [ -n "$CONTRACT_ID" ]; then
+    echo "SoroTask deployed successfully!"
+    break
+  fi
+  echo "Deploy attempt $attempt failed; retrying in 4s..."
+  sleep 4
+done
 
-echo "Deploying SoroTask contract instance..."
-stellar --very-verbose contract deploy \
-  --wasm-hash "$WASM_HASH" \
-  --source deployer \
-  --network local > /tmp/contract_id.txt || {
-    echo "Contract deploy failed! Checking docker logs for soroban-rpc:"
-    docker logs soroban-rpc --tail 100 || true
-    exit 1
-}
-CONTRACT_ID=$(cat /tmp/contract_id.txt | tail -1)
+if [ -z "$CONTRACT_ID" ]; then
+  echo "::error::Failed to deploy SoroTask contract after multiple attempts"
+  docker logs soroban-rpc --tail 100 || true
+  exit 1
+fi
 echo "CONTRACT_ID: $CONTRACT_ID"
 
 # 5. Deploy Mock Target Contract
 echo "Deploying Mock Target contract..."
-stellar contract deploy \
-  --wasm-hash "$WASM_HASH" \
-  --source deployer \
-  --network local > /tmp/target_id.txt || true
-TARGET_ID=$(cat /tmp/target_id.txt 2>/dev/null | tail -1)
+TARGET_ID=""
+for attempt in {1..3}; do
+  DEPLOY_OUTPUT=$(stellar contract deploy \
+    --wasm "$WASM_PATH" \
+    --source deployer \
+    --network local \
+    --fee 10000000 2>&1 || true)
+  TARGET_ID=$(printf '%s\n' "$DEPLOY_OUTPUT" | grep -o 'C[0-9A-Z]\{55\}' | tail -1 || true)
+  if [ -n "$TARGET_ID" ]; then
+    break
+  fi
+  sleep 3
+done
 if [ -z "$TARGET_ID" ]; then TARGET_ID="$CONTRACT_ID"; fi
 echo "TARGET_ID: $TARGET_ID"
 
@@ -104,8 +114,8 @@ NETWORK_PASSPHRASE="$NETWORK_PASSPHRASE"
 CONTRACT_ID="$CONTRACT_ID"
 TARGET_ID="$TARGET_ID"
 TOKEN_ID="$TOKEN_ID"
-KEEPER_SECRET="$(stellar keys show keeper)"
-CREATOR_SECRET="$(stellar keys show creator)"
+KEEPER_SECRET="$(stellar keys secret keeper 2>/dev/null || stellar keys show keeper)"
+CREATOR_SECRET="$(stellar keys secret creator 2>/dev/null || stellar keys show creator)"
 POLLING_INTERVAL_MS=2000
 LOG_LEVEL=debug
 EOF
