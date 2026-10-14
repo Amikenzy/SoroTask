@@ -11,21 +11,13 @@ jobs:
     name: End-to-End Multi-Service Integration
     runs-on: ubuntu-latest
 
-    services:
-      soroban-rpc:
-        image: stellar/quickstart:testing
-        ports:
-          # stellar/quickstart publishes every HTTP surface (Horizon, Soroban
-          # RPC, and Friendbot) on container port 8000; mapping 8000→8000 is
-          # the only port mapping needed (#1213).
-          - 8000:8000
-        args:
-          - --local
-          - --enable-soroban-rpc
-
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
+
+      - name: Start Soroban RPC (stellar/quickstart)
+        run: |
+          docker run -d --name soroban-rpc -p 8000:8000 stellar/quickstart:testing --local --enable-soroban-rpc
 
       - name: Check for Conflict Markers
         run: |
@@ -33,7 +25,7 @@ jobs:
           ./scripts/check-conflict-markers.sh
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
@@ -44,10 +36,14 @@ jobs:
           targets: wasm32-unknown-unknown, wasm32v1-none
 
       - name: Install Stellar CLI
-        # Two-variant install chain, not a suppression: if both variants fail
-        # the step (and the job) fails (#1213).
         run: |
-          cargo install --locked stellar-cli --features opt || cargo install --locked stellar-cli
+          mkdir -p ~/.cargo/bin
+          ARCH=$(uname -m)
+          curl -fsSL "https://github.com/stellar/stellar-cli/releases/download/v28.1.0/stellar-cli-28.1.0-${ARCH}-unknown-linux-gnu.tar.gz" | tar -xzf - -C ~/.cargo/bin || {
+            sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+            cargo install --locked stellar-cli
+          }
+          stellar --version
 
       - name: Install Root Dependencies (npm workspaces)
         # #1218: the repository is an npm workspace root — one install covers
@@ -186,7 +182,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Run PITR Backup Script (self-test)
         run: |
