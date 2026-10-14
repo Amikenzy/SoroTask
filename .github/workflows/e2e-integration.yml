@@ -17,7 +17,7 @@ jobs:
 
       - name: Start Soroban RPC (stellar/quickstart)
         run: |
-          docker run -d --name soroban-rpc -p 8000:8000 stellar/quickstart:latest --local --enable-soroban-rpc
+          docker run -d --name soroban-rpc -p 8000:8000 stellar/quickstart:latest --local --enable-soroban-rpc --limits testnet
 
       - name: Check for Conflict Markers
         run: |
@@ -78,11 +78,11 @@ jobs:
         # SoroTask contract, exported for the e2e suite and keeper env.
         run: |
           chmod +x scripts/setup-contracts.sh
-          OUTPUT="$(./scripts/setup-contracts.sh)"
-          echo "$OUTPUT"
-          CONTRACT_ID="$(printf '%s\n' "$OUTPUT" | sed -n 's/^CONTRACT_ID: //p' | tail -1)"
+          ./scripts/setup-contracts.sh | tee /tmp/setup-contracts.log
+          CONTRACT_ID="$(sed -n 's/^CONTRACT_ID: //p' /tmp/setup-contracts.log | tail -1)"
           if [ -z "$CONTRACT_ID" ]; then
             echo "::error::setup-contracts.sh did not report CONTRACT_ID"
+            docker logs soroban-rpc --tail 100 || true
             exit 1
           fi
           echo "CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
@@ -171,6 +171,7 @@ jobs:
       - name: Collect Service Logs
         if: failure()
         run: |
+          echo "--- soroban-rpc.log ---"; docker logs soroban-rpc --tail 100 || true
           echo "--- keeper.log ---"; tail -50 /tmp/keeper.log || true
           echo "--- indexer.log ---"; tail -50 /tmp/indexer.log || true
           echo "--- zk.log ---"; tail -50 /tmp/zk.log || true

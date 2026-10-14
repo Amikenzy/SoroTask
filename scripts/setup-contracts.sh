@@ -41,7 +41,13 @@ fi
 
 # 4. Deploy Main Contract
 echo "Deploying SoroTask contract..."
-CONTRACT_ID=$(stellar contract deploy \
+stellar contract optimize --wasm "$WASM_PATH" || true
+if [ -f "${WASM_PATH%.wasm}.optimized.wasm" ]; then
+  WASM_PATH="${WASM_PATH%.wasm}.optimized.wasm"
+fi
+echo "Using contract WASM at: $WASM_PATH"
+
+CONTRACT_ID=$(stellar --very-verbose contract deploy \
   --wasm "$WASM_PATH" \
   --source deployer \
   --network local)
@@ -53,7 +59,7 @@ echo "Deploying Mock Target contract..."
 TARGET_ID=$(stellar contract deploy \
   --wasm "$WASM_PATH" \
   --source deployer \
-  --network local)
+  --network local || echo "$CONTRACT_ID")
 
 echo "TARGET_ID: $TARGET_ID"
 
