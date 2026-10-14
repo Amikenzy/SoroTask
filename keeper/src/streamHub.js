@@ -200,7 +200,7 @@ class StreamHub extends EventEmitter {
   _runHeartbeat() {
     const now = Date.now();
 
-    if (this.namespaceServer) {
+    if (this.namespaceServer && typeof this.namespaceServer.emit === 'function') {
       this.namespaceServer.emit('stream:ping', { timestamp: now });
     }
 

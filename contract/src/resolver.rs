@@ -4,7 +4,7 @@
 //! implement, along with shared error types and utilities for cross-contract
 //! invocation safety.
 
-use soroban_sdk::{contracttype, Env, Val, Address, Bytes, Symbol, TryFromVal};
+use soroban_sdk::{contracttype, Address, Bytes, Env, Symbol, TryFromVal, Val};
 
 /// The canonical resolver interface.
 ///
@@ -113,7 +113,7 @@ pub struct TokenBalanceContext {
 /// Utility functions for resolver contracts.
 pub mod utils {
     use super::*;
-    use soroban_sdk::{Val, xdr::FromXdr};
+    use soroban_sdk::{xdr::FromXdr, Val};
 
     /// Safely decode resolver context bytes into a typed structure.
     ///

@@ -65,19 +65,22 @@ mod tests {
     #[test]
     fn limits_each_target_and_leaks_capacity_over_time() {
         let env = Env::default();
+        let contract_id = env.register(crate::SoroTaskContract, ());
         let first = Address::generate(&env);
         let second = Address::generate(&env);
 
-        for _ in 0..10 {
+        env.as_contract(&contract_id, || {
+            for _ in 0..10 {
+                assert!(allow_invocation(&env, &first));
+            }
+            assert!(!allow_invocation(&env, &first));
+            assert!(allow_invocation(&env, &second));
+
+            env.ledger().with_mut(|ledger| ledger.sequence_number += 10);
+            assert!(!allow_invocation(&env, &first));
+
+            env.ledger().with_mut(|ledger| ledger.sequence_number += 90);
             assert!(allow_invocation(&env, &first));
-        }
-        assert!(!allow_invocation(&env, &first));
-        assert!(allow_invocation(&env, &second));
-
-        env.ledger().with_mut(|ledger| ledger.sequence_number += 10);
-        assert!(!allow_invocation(&env, &first));
-
-        env.ledger().with_mut(|ledger| ledger.sequence_number += 90);
-        assert!(allow_invocation(&env, &first));
+        });
     }
 }

@@ -95,11 +95,13 @@ mod test_combinations {
             resolver: None,
             interval: 3_600,
             last_run: 0,
-            gas_balance: 0,  // Set to 0 to avoid requiring token transfer at registration
+            gas_balance: 0, // Set to 0 to avoid requiring token transfer at registration
             whitelist: Vec::new(env),
             is_active: true,
             blocked_by: Vec::new(env),
             permissions: 15,
+            expiration_timestamp: 0,
+            max_runs: 0,
         }
     }
 
@@ -182,7 +184,7 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000); // Mint enough for gas
-        
+
         let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
@@ -222,7 +224,7 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &100); // Mint enough for gas_balance
-        
+
         let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
@@ -261,7 +263,7 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000); // Mint enough for gas_balance
-        
+
         let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
@@ -297,7 +299,7 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000); // Mint enough for gas_balance
-        
+
         let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
@@ -426,7 +428,7 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000);
-        
+
         let mut cfg = base(&env, target);
         cfg.creator = creator.clone();
         cfg.whitelist = vec![&env, keeper.clone()];
@@ -551,19 +553,19 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000);
-        
+
         let mut blocker_cfg = base(&env, target.clone());
         blocker_cfg.creator = creator.clone();
-        blocker_cfg.gas_balance = 100;  // Just enough for min bounty
+        blocker_cfg.gas_balance = 100; // Just enough for min bounty
         let blocker_id = client.register(&blocker_cfg);
         // Deposit enough for blocker execution (fee ~300)
         client.deposit_gas(&blocker_id, &creator, &500);
-        
-        let mut cfg = TaskConfig {
+
+        let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
             resolver: Some(resolver),
-            interval: 100,  // Different from blocker's interval (3600) to avoid duplicate fingerprint
+            interval: 100, // Different from blocker's interval (3600) to avoid duplicate fingerprint
             ..base(&env, target)
         };
         let task_id = client.register(&cfg);
@@ -602,19 +604,19 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &5000);
-        
+
         let mut blocker_cfg = base(&env, target.clone());
         blocker_cfg.creator = creator.clone();
-        blocker_cfg.gas_balance = 100;  // Just enough for min bounty
+        blocker_cfg.gas_balance = 100; // Just enough for min bounty
         let blocker_id = client.register(&blocker_cfg);
         // Deposit enough for blocker execution (fee ~300)
         client.deposit_gas(&blocker_id, &creator, &500);
-        
-        let mut cfg = TaskConfig {
+
+        let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
             resolver: Some(resolver),
-            interval: 100,  // Different from blocker's interval (3600) to avoid duplicate fingerprint
+            interval: 100, // Different from blocker's interval (3600) to avoid duplicate fingerprint
             ..base(&env, target)
         };
         let task_id = client.register(&cfg);
@@ -713,7 +715,7 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000);
-        
+
         let mut cfg = base(&env, target);
         cfg.creator = creator.clone();
         cfg.resolver = Some(resolver);
@@ -750,16 +752,16 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000); // Mint enough for gas_balance
-        
+
         let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
             interval: 500,
-            gas_balance: 0,  // Will deposit below
+            gas_balance: 0, // Will deposit below
             ..base(&env, target)
         };
         let task_id = client.register(&cfg);
-        
+
         // Deposit gas to fund the contract
         client.deposit_gas(&task_id, &creator, &1000);
         let keeper = Address::generate(&env);
@@ -787,7 +789,7 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000); // Mint enough for gas_balance
-        
+
         let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
@@ -828,18 +830,18 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &5000); // Mint enough for multiple executions
-        
+
         let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
             resolver: Some(resolver),
             whitelist: vec![&env, keeper.clone()],
             interval: 1_000,
-            gas_balance: 0,  // Will deposit below
+            gas_balance: 0, // Will deposit below
             ..base(&env, target)
         };
         let task_id = client.register(&cfg);
-        
+
         // Deposit gas to fund the contract
         client.deposit_gas(&task_id, &creator, &2000);
 
@@ -849,7 +851,11 @@ mod test_combinations {
         let stored = client.get_task(&task_id).unwrap();
         assert_eq!(stored.last_run, 1_000);
         // Dynamic fee for interval=1000 is ~299, so 2000 - 299 = 1701
-        assert!(stored.gas_balance < 2000 && stored.gas_balance > 1600, "gas should be consumed: {}", stored.gas_balance);
+        assert!(
+            stored.gas_balance < 2000 && stored.gas_balance > 1600,
+            "gas should be consumed: {}",
+            stored.gas_balance
+        );
 
         // Second execution before interval elapses must be skipped
         ts(&env, 1_500);
@@ -866,7 +872,11 @@ mod test_combinations {
         assert_eq!(client.get_task(&task_id).unwrap().last_run, 2_000);
         // After two executions: 2000 - 299 - 299 = ~1402
         let final_balance = client.get_task(&task_id).unwrap().gas_balance;
-        assert!(final_balance < 1701 && final_balance > 1300, "gas should be consumed again: {}", final_balance);
+        assert!(
+            final_balance < 1701 && final_balance > 1300,
+            "gas should be consumed again: {}",
+            final_balance
+        );
     }
 
     /// Why: All features configured but unauthorized keeper — must fail at the
@@ -886,7 +896,7 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &2000); // Mint enough for gas_balance
-        
+
         let cfg = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
@@ -954,9 +964,9 @@ mod test_combinations {
         let task_id = client.register(&cfg);
 
         // Fund just enough for one execution
-        token_admin_client.mint(&creator, &100);
-        client.deposit_gas(&task_id, &creator, &100);
-        assert_eq!(client.get_task(&task_id).unwrap().gas_balance, 100);
+        token_admin_client.mint(&creator, &300);
+        client.deposit_gas(&task_id, &creator, &300);
+        assert_eq!(client.get_task(&task_id).unwrap().gas_balance, 300);
 
         // First execution succeeds
         ts(&env, 100);
@@ -996,23 +1006,23 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &5000);
-        
+
         let mut blocker_1_cfg = base(&env, target.clone());
         blocker_1_cfg.creator = creator.clone();
         blocker_1_cfg.gas_balance = 100;
         let blocker_1 = client.register(&blocker_1_cfg);
         client.deposit_gas(&blocker_1, &creator, &500);
-        
+
         let mut blocker_2_cfg = base(&env, target.clone());
         blocker_2_cfg.creator = creator.clone();
         blocker_2_cfg.gas_balance = 100;
-        blocker_2_cfg.interval = 100;  // Different from blocker_1's interval (3600)
+        blocker_2_cfg.interval = 100; // Different from blocker_1's interval (3600)
         let blocker_2 = client.register(&blocker_2_cfg);
         client.deposit_gas(&blocker_2, &creator, &500);
-        
+
         let mut cfg = base(&env, target);
         cfg.creator = creator.clone();
-        cfg.interval = 200;  // Different from blockers' intervals (3600, 100) to avoid duplicate fingerprint
+        cfg.interval = 200; // Different from blockers' intervals (3600, 100) to avoid duplicate fingerprint
         let task_id = client.register(&cfg);
         client.deposit_gas(&task_id, &creator, &500);
         client.add_dependency(&task_id, &blocker_1);
@@ -1056,17 +1066,17 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &5000);
-        
+
         let mut blocker_cfg = base(&env, target.clone());
         blocker_cfg.creator = creator.clone();
-        blocker_cfg.gas_balance = 100;  // Just enough for min bounty
+        blocker_cfg.gas_balance = 100; // Just enough for min bounty
         let blocker_id = client.register(&blocker_cfg);
         // Deposit enough for blocker execution (fee ~300)
         client.deposit_gas(&blocker_id, &creator, &500);
-        
+
         let mut cfg = base(&env, target);
         cfg.creator = creator.clone();
-        cfg.interval = 100;  // Different from blocker's interval (3600) to avoid duplicate fingerprint
+        cfg.interval = 100; // Different from blocker's interval (3600) to avoid duplicate fingerprint
         let task_id = client.register(&cfg);
         // Deposit enough for task execution (fee ~300)
         client.deposit_gas(&task_id, &creator, &500);
@@ -1108,18 +1118,18 @@ mod test_combinations {
 
         let creator = Address::generate(&env);
         token_client.mint(&creator, &5000);
-        
+
         let mut blocker_cfg = base(&env, target.clone());
         blocker_cfg.creator = creator.clone();
-        blocker_cfg.gas_balance = 100;  // Just enough for min bounty
+        blocker_cfg.gas_balance = 100; // Just enough for min bounty
         let blocker_id = client.register(&blocker_cfg);
         // Deposit enough for blocker execution (fee ~300)
         client.deposit_gas(&blocker_id, &creator, &500);
-        
+
         let mut cfg = base(&env, target);
         cfg.creator = creator.clone();
         cfg.resolver = Some(resolver);
-        cfg.interval = 100;  // Different from blocker's interval (3600) to avoid duplicate fingerprint
+        cfg.interval = 100; // Different from blocker's interval (3600) to avoid duplicate fingerprint
         let task_id = client.register(&cfg);
         // Deposit enough for task execution (fee ~300)
         client.deposit_gas(&task_id, &creator, &500);

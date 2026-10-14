@@ -11,7 +11,7 @@
 //! Note: CPU/memory metering is only available in test environments via
 //! `env.cost_estimate()`. In production, static rates are used.
 
-use soroban_sdk::{Env, contracttype, Address, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
 use crate::{DataKey, NetworkMetrics};
 
@@ -104,7 +104,7 @@ impl GasMeter {
         if !env.storage().instance().has(&DataKey::Token) {
             return 100; // FIXED_EXECUTION_FEE
         }
-        
+
         // Get configured base fee as minimum
         let configured_base = env
             .storage()
@@ -129,7 +129,8 @@ impl GasMeter {
             let interval_position = interval - MIN_INTERVAL;
             // multiplier = MAX_MULTIPLIER - (MAX_MULTIPLIER - 1) * position / range
             let multiplier = MAX_BASE_FEE_MULTIPLIER
-                - (MAX_BASE_FEE_MULTIPLIER - 1) * interval_position as i128 / interval_range as i128;
+                - (MAX_BASE_FEE_MULTIPLIER - 1) * interval_position as i128
+                    / interval_range as i128;
             configured_base * multiplier
         }
     }
@@ -142,7 +143,7 @@ impl GasMeter {
         if !env.storage().instance().has(&DataKey::Token) {
             return 0;
         }
-        
+
         // Check if we have network metrics
         if let Some(metrics) = env
             .storage()
@@ -158,7 +159,7 @@ impl GasMeter {
 
             // Congestion factor: 0.5x at 50% congestion, 2x at 100% congestion
             let congestion_factor = congestion * 100 / 50; // 100 = 1x, 200 = 2x, etc.
-            
+
             // Gas price factor: scales with observed gas prices
             let gas_price_factor = avg_gas_price * 100 / BASE_GAS_PRICE;
 
@@ -360,14 +361,15 @@ impl EscrowManager {
                 .instance()
                 .set(&DataKey::TotalTaskEscrows, &total_escrows);
 
-            // Transfer back to creator
-            let token: Address = env
+            // Transfer back to creator if token is initialized
+            if let Some(token) = env
                 .storage()
                 .instance()
-                .get(&DataKey::Token)
-                .expect("Token not initialized");
-            let token_client = soroban_sdk::token::Client::new(env, &token);
-            token_client.transfer(&env.current_contract_address(), creator, &escrowed);
+                .get::<DataKey, Address>(&DataKey::Token)
+            {
+                let token_client = soroban_sdk::token::Client::new(env, &token);
+                token_client.transfer(&env.current_contract_address(), creator, &escrowed);
+            }
 
             // Clear task escrow
             env.storage()
@@ -378,7 +380,7 @@ impl EscrowManager {
         escrowed
     }
 
-    /// Settle escrow after execution: deduct consumed from escrow, 
+    /// Settle escrow after execution: deduct consumed from escrow,
     /// return refund to task's gas_balance, and transfer consumed to keeper/protocol
     /// Returns (consumed_amount, refund_amount)
     pub fn settle_escrow(env: &Env, task_id: u64, consumed: i128) -> (i128, i128) {
@@ -421,12 +423,7 @@ impl EscrowManager {
 }
 
 /// Update gas rates (admin only)
-pub fn update_gas_rates(
-    env: Env,
-    cpu_rate: i128,
-    mem_rate: i128,
-    base_fee: i128,
-) {
+pub fn update_gas_rates(env: Env, cpu_rate: i128, mem_rate: i128, base_fee: i128) {
     // Admin check
     if let Some(admin) = env
         .storage()
@@ -436,8 +433,12 @@ pub fn update_gas_rates(
         admin.require_auth();
     }
 
-    env.storage().instance().set(&DataKey::GasCpuRate, &cpu_rate);
-    env.storage().instance().set(&DataKey::GasMemRate, &mem_rate);
+    env.storage()
+        .instance()
+        .set(&DataKey::GasCpuRate, &cpu_rate);
+    env.storage()
+        .instance()
+        .set(&DataKey::GasMemRate, &mem_rate);
     env.storage().instance().set(&DataKey::BaseFee, &base_fee);
 
     env.events().publish(
@@ -473,7 +474,10 @@ pub fn get_gas_rates(env: Env) -> (i128, i128, i128) {
 mod tests {
     use super::*;
     use crate::SoroTaskContract;
-    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, Address, Vec};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Address, Env, Vec,
+    };
 
     fn setup_contract_env() -> (Env, Address) {
         let env = Env::default();
@@ -509,7 +513,9 @@ mod tests {
             let token_address = token_id.address();
 
             // Setup contract
-            env.storage().instance().set(&DataKey::Token, &token_address);
+            env.storage()
+                .instance()
+                .set(&DataKey::Token, &token_address);
 
             let task_id = 1;
             let amount = 1000;
@@ -539,7 +545,9 @@ mod tests {
             token_client.mint(&creator, &5000);
             token_client.mint(&env.current_contract_address(), &5000);
 
-            env.storage().instance().set(&DataKey::Token, &token_address);
+            env.storage()
+                .instance()
+                .set(&DataKey::Token, &token_address);
 
             let task_id = 1;
             let amount = 1000;
@@ -558,7 +566,9 @@ mod tests {
             let token_admin = Address::generate(&env);
             let token_id = env.register_stellar_asset_contract_v2(token_admin);
             let token_address = token_id.address();
-            env.storage().instance().set(&DataKey::Token, &token_address);
+            env.storage()
+                .instance()
+                .set(&DataKey::Token, &token_address);
 
             // Set network metrics with high congestion
             let metrics = NetworkMetrics {
@@ -567,7 +577,9 @@ mod tests {
                 current_congestion_level: 80,
                 last_updated: env.ledger().timestamp(),
             };
-            env.storage().instance().set(&DataKey::NetworkMetrics, &metrics);
+            env.storage()
+                .instance()
+                .set(&DataKey::NetworkMetrics, &metrics);
 
             let meter = GasMeter::new(&env, 3600);
             let breakdown = meter.fee_breakdown(&env);

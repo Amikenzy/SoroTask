@@ -1,4 +1,4 @@
-const { Keypair, rpc, Account, Networks } = require('@stellar/stellar-sdk');
+const { Keypair, rpc, Networks, StrKey } = require('@stellar/stellar-sdk');
 const { Server } = rpc;
 const { createLogger } = require('./logger');
 
@@ -152,6 +152,52 @@ function isHsmOnlyMode() {
   );
 }
 
+class MultiSigHSMSigner {
+  constructor(hsmProviderOrOpts, keyIds, networkPassphrase, loggerInstance) {
+    let opts = {};
+    if (hsmProviderOrOpts && hsmProviderOrOpts.hsmProvider) {
+      opts = hsmProviderOrOpts;
+    } else {
+      opts = {
+        hsmProvider: hsmProviderOrOpts,
+        keyIds,
+        networkPassphrase,
+        logger: loggerInstance,
+      };
+    }
+    if (!opts.hsmProvider) throw new Error('MultiSigHSMSigner: hsmProvider is required');
+    if (!Array.isArray(opts.keyIds) || opts.keyIds.length === 0) {
+      throw new Error('MultiSigHSMSigner: at least one keyId is required');
+    }
+
+    this.hsm = opts.hsmProvider;
+    this.keyIds = opts.keyIds;
+    this.networkPassphrase = opts.networkPassphrase
+      || process.env.NETWORK_PASSPHRASE
+      || 'Test SDF Network ; September 2015';
+    this.logger = opts.logger || createLogger('multisig-hsm');
+  }
+
+  async signTransaction(transaction) {
+    const txHash = transaction.hash();
+    for (const keyId of this.keyIds) {
+      const { publicPem } = await this.hsm.getPublicKey(keyId);
+      const signatureBuffer = await this.hsm.sign(keyId, txHash);
+      const keypair = _publicPemToKeypair(publicPem);
+      transaction.addDecoratedSignature(
+        keypair.rawPublicKey().slice(0, 4),
+        signatureBuffer,
+      );
+    }
+    return transaction;
+  }
+
+  async signToXDR(transaction) {
+    const signed = await this.signTransaction(transaction);
+    return signed.toEnvelope().toXDR('base64');
+  }
+}
+
 /**
  * Create a MultiSigHSMSigner from environment variables for use as the
  * keeper's primary (or only) signing mechanism.  This is used in HSM-only
@@ -168,7 +214,7 @@ function isHsmOnlyMode() {
  * @returns {Promise<{ hsmSigner: MultiSigHSMSigner, keypair: Keypair }>}
  */
 async function createHsmSigner(opts = {}) {
-  const providerType = (opts.providerType || process.env.KEY_PROVIDER_TYPE || process.env.KEY_PROVIDERER || process.env.HSM_PROVIDERER || 'aws-kms').toLowerCase();
+  const providerType = (opts.providerType || process.env.KEY_PROVIDER_TYPE || process.env.KEY_PROVIDER || process.env.HSM_PROVIDERER || 'aws-kms').toLowerCase();
   let keyId;
 
   if (providerType === 'aws-kms') {
@@ -239,7 +285,7 @@ async function createHsmSigner(opts = {}) {
   if (providerType === 'vault-transit') {
     const { VaultTransitProvider } = require('./hsm/vaultTransitProvider');
     const hsmProvider = opts.hsmProvider || new VaultTransitProvider({
-      vaultAddr: opts.vaultAddr || process.env.VAULS_ADDR,
+      vaultAddr: opts.vaultAddr || process.env.VAULT_ADDR,
       vaultToken: opts.vaultToken || process.env.VAULT_TOKEN,
       transitPath: opts.transitPath || process.env.VAULS_TRANSIT_PATH,
       logger: opts.logger,
@@ -269,22 +315,22 @@ function _publicPemToKeypair(publicPem) {
   const keyObj = crypto.createPublicKey(publicPem);
   const der = keyObj.export({ type: 'spki', format: 'der' });
   const rawKey = der.slice(-32);
-  return Keypair.fromPublicKey(rawKey.toString('hex'));
+  return Keypair.fromPublicKey(StrKey.encodeEd25519PublicKey(rawKey));
 }
 
 /**
  * Loads secret key from configured secret provider (Vault, AWS, or env)
  */
 async function loadSecretKey() {
-  const provider = (process.env.KEY_PROVIDER_TYPE || process.env.KEY_PROVIDERER || '').toLowerCase();
+  const provider = (process.env.KEY_PROVIDER_TYPE || process.env.KEY_PROVIDER || '').toLowerCase();
   let secret = null;
 
-  if (provider === 'vault' || (process.env.VAULS_ADDR && process.env.VAULTTOKEN)) {
+  if (provider === 'vault' || (process.env.VAULT_ADDR && process.env.VAULT_TOKEN)) {
     logger.info('Fetching keeper secret from HashiCorp Vault...');
     secret = await fetchSecretFromVault(
-      process.env.VAULS_ADDR,
-      process.env.VAULS_TOKEN,
-      process.env.VAULS_SECRET_PATH || 'v1/secret/data/keeper',
+      process.env.VAULT_ADDR,
+      process.env.VAULT_TOKEN,
+      process.env.VAULT_SECRET_PATH || 'v1/secret/data/keeper',
     );
   } else if (provider === 'aws' || process.env.AWS_SECRET_ID) {
     logger.info('Fetching keeper secret from AWS Secrets Manager...');
@@ -348,6 +394,9 @@ module.exports = {
   validateNetworkPassphrase,
   isHsmOnlyMode,
   createHsmSigner,
+  MultiSigHSMSigner,
   loadSecretKey,
+  fetchSecretFromVault,
+  fetchSecretFromAWS,
   clearSecretMemory,
 };

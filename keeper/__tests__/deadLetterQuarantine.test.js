@@ -5,6 +5,7 @@
  */
 
 const fs = require('fs');
+const { setImmediate } = require('timers');
 const { DeadLetterQueue, PostgresDeadLetterStore, FailureCategory, classifyTaskFailure } = require('../src/deadLetter');
 
 jest.mock('fs');

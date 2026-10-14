@@ -13,8 +13,7 @@ pub const ROLE_SLASHER: u64 = 1 << 3;
 /// Returns the effective bitmask granted to `delegatee` by `delegator`.
 /// Expired delegations yield a bitmask of 0.
 pub fn read_delegation(env: &Env, delegator: &Address, delegatee: &Address) -> u64 {
-    env
-        .storage()
+    env.storage()
         .persistent()
         .get(&DataKey::Delegation(delegator.clone(), delegatee.clone()))
         .unwrap_or(0)
@@ -30,8 +29,7 @@ pub fn set_delegation(env: &Env, delegator: &Address, delegatee: &Address, bitma
 
 /// Revokes a delegation.
 pub fn revoke_delegation(env: &Env, delegator: &Address, delegatee: &Address) {
-    env
-        .storage()
+    env.storage()
         .persistent()
         .remove(&DataKey::Delegation(delegator.clone(), delegatee.clone()));
 }

@@ -5,8 +5,8 @@
 //! guards and cross-contract authorization to prevent manipulation during the
 //! balance check.
 
-use soroban_sdk::{contract, contractimpl, Env, Bytes, Symbol, Vec, Address};
-use soro_task_contract::resolver::{TokenBalanceContext, utils};
+use soro_task_contract::resolver::{utils, TokenBalanceContext};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, Symbol, Vec};
 
 #[contract]
 pub struct TokenBalanceResolver;
@@ -21,7 +21,9 @@ impl TokenBalanceResolver {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         // Reentrancy guard initialized to false
-        env.storage().instance().set(&DataKey::ReentrancyGuard, &false);
+        env.storage()
+            .instance()
+            .set(&DataKey::ReentrancyGuard, &false);
     }
 
     /// Set the admin address (current admin only).
@@ -126,7 +128,7 @@ impl TokenBalanceResolver {
                     }
                 };
 
-// Require auth for each account
+                // Require auth for each account
                 ctx.account.require_auth();
 
                 let balance: i128 = match env.try_invoke_contract::<i128, soroban_sdk::Error>(
@@ -162,11 +164,11 @@ enum DataKey {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, Vec, xdr::ToXdr, IntoVal};
+    use soroban_sdk::{testutils::Address as _, xdr::ToXdr, Address, Bytes, Env, IntoVal, Vec};
 
     // Mock token contract for testing
     mod mock_token {
-        use soroban_sdk::{contract, contractimpl, Env, Address, Vec, Val, Symbol};
+        use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Val, Vec};
 
         #[contract]
         pub struct MockToken;
@@ -174,24 +176,45 @@ mod test {
         #[contractimpl]
         impl MockToken {
             pub fn mint(env: Env, to: Address, amount: i128) {
-                let mut balance: i128 = env.storage().persistent().get(&DataKey::Balance(to.clone())).unwrap_or(0);
+                let mut balance: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::Balance(to.clone()))
+                    .unwrap_or(0);
                 balance += amount;
-                env.storage().persistent().set(&DataKey::Balance(to), &balance);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Balance(to), &balance);
             }
 
             pub fn balance(env: Env, account: Address) -> i128 {
-                env.storage().persistent().get(&DataKey::Balance(account)).unwrap_or(0)
+                env.storage()
+                    .persistent()
+                    .get(&DataKey::Balance(account))
+                    .unwrap_or(0)
             }
 
             pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
                 from.require_auth();
-                let mut from_balance: i128 = env.storage().persistent().get(&DataKey::Balance(from.clone())).unwrap_or(0);
-                let mut to_balance: i128 = env.storage().persistent().get(&DataKey::Balance(to.clone())).unwrap_or(0);
+                let mut from_balance: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::Balance(from.clone()))
+                    .unwrap_or(0);
+                let mut to_balance: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::Balance(to.clone()))
+                    .unwrap_or(0);
                 assert!(from_balance >= amount, "Insufficient balance");
                 from_balance -= amount;
                 to_balance += amount;
-                env.storage().persistent().set(&DataKey::Balance(from), &from_balance);
-                env.storage().persistent().set(&DataKey::Balance(to), &to_balance);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Balance(from), &from_balance);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Balance(to), &to_balance);
             }
         }
 
@@ -209,15 +232,17 @@ mod test {
 
         let admin = Address::generate(&env);
         let token = env.register(mock_token::MockToken, ());
+        let token_client = mock_token::MockTokenClient::new(&env, &token);
         let account = Address::generate(&env);
 
         let resolver = env.register(TokenBalanceResolver, ());
+        let client = TokenBalanceResolverClient::new(&env, &resolver);
 
         // Initialize resolver
-        TokenBalanceResolver::initialize(env.clone(), admin.clone());
+        client.initialize(&admin);
 
         // Mint tokens to account
-        mock_token::MockToken::mint(env.clone(), account.clone(), 1000);
+        token_client.mint(&account, &1000);
 
         // Create context: balance must be between 500 and 1500
         let ctx = TokenBalanceContext {
@@ -229,19 +254,19 @@ mod test {
         let context = ctx.to_xdr(&env);
 
         // Should pass - balance is 1000 (within range)
-        assert!(TokenBalanceResolver::check_condition(env.clone(), 1, context.clone()));
+        assert!(client.check_condition(&1, &context));
 
         // Transfer some tokens away
-        mock_token::MockToken::transfer(env.clone(), account.clone(), Address::generate(&env), 600);
+        token_client.transfer(&account, &Address::generate(&env), &600);
 
         // Should fail - balance is now 400 (below min)
-        assert!(!TokenBalanceResolver::check_condition(env.clone(), 1, context.clone()));
+        assert!(!client.check_condition(&1, &context));
 
-        // Transfer tokens back
-        mock_token::MockToken::mint(env.clone(), account.clone(), 1000);
+        // Transfer tokens back (exceeding max)
+        token_client.mint(&account, &1200);
 
-        // Should fail - balance is now 1400 (above max)
-        assert!(!TokenBalanceResolver::check_condition(env.clone(), 1, context));
+        // Should fail - balance is now 1600 (above max)
+        assert!(!client.check_condition(&1, &context));
     }
 
     #[test]
@@ -251,11 +276,14 @@ mod test {
 
         let admin = Address::generate(&env);
         let token = env.register(mock_token::MockToken, ());
+        let token_client = mock_token::MockTokenClient::new(&env, &token);
         let account = Address::generate(&env);
 
-        TokenBalanceResolver::initialize(env.clone(), admin.clone());
+        let resolver = env.register(TokenBalanceResolver, ());
+        let client = TokenBalanceResolverClient::new(&env, &resolver);
 
-        mock_token::MockToken::mint(env.clone(), account.clone(), 1000);
+        client.initialize(&admin);
+        token_client.mint(&account, &1000);
 
         // No upper bound (i128::MAX)
         let ctx = TokenBalanceContext {
@@ -266,10 +294,10 @@ mod test {
         };
         let context = ctx.to_xdr(&env);
 
-        assert!(TokenBalanceResolver::check_condition(env.clone(), 1, context));
+        assert!(client.check_condition(&1, &context));
 
         // Add more tokens - should still pass
-        mock_token::MockToken::mint(env.clone(), account.clone(), 1000000);
+        token_client.mint(&account, &1000000);
         let ctx2 = TokenBalanceContext {
             token,
             account,
@@ -277,7 +305,7 @@ mod test {
             max_balance: i128::MAX,
         };
         let context2 = ctx2.to_xdr(&env);
-        assert!(TokenBalanceResolver::check_condition(env.clone(), 1, context2));
+        assert!(client.check_condition(&1, &context2));
     }
 
     #[test]
@@ -287,13 +315,14 @@ mod test {
 
         let admin = Address::generate(&env);
         let token = env.register(mock_token::MockToken, ());
+        let token_client = mock_token::MockTokenClient::new(&env, &token);
         let account = Address::generate(&env);
 
         let resolver = env.register(TokenBalanceResolver, ());
+        let client = TokenBalanceResolverClient::new(&env, &resolver);
 
-        TokenBalanceResolver::initialize(env.clone(), admin.clone());
-
-        mock_token::MockToken::mint(env.clone(), account.clone(), 1000);
+        client.initialize(&admin);
+        token_client.mint(&account, &1000);
 
         let ctx = TokenBalanceContext {
             token: token.clone(),
@@ -304,19 +333,27 @@ mod test {
         let context = ctx.to_xdr(&env);
 
         // First call should succeed
-        assert!(TokenBalanceResolver::check_condition(env.clone(), 1, context.clone()));
+        assert!(client.check_condition(&1, &context));
 
-        // Simulate reentrancy by directly setting the guard
-        env.storage().instance().set(&DataKey::ReentrancyGuard, &true);
+        // Simulate reentrancy by directly setting the guard in contract context
+        env.as_contract(&resolver, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &true);
+        });
 
         // Second call should fail due to reentrancy guard
-        assert!(!TokenBalanceResolver::check_condition(env.clone(), 1, context.clone()));
+        assert!(!client.check_condition(&1, &context));
 
         // Reset guard
-        env.storage().instance().set(&DataKey::ReentrancyGuard, &false);
+        env.as_contract(&resolver, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::ReentrancyGuard, &false);
+        });
 
         // Should work again
-        assert!(TokenBalanceResolver::check_condition(env.clone(), 1, context));
+        assert!(client.check_condition(&1, &context));
     }
 
     #[test]
@@ -326,13 +363,17 @@ mod test {
 
         let admin = Address::generate(&env);
         let token = env.register(mock_token::MockToken, ());
+        let token_client = mock_token::MockTokenClient::new(&env, &token);
         let account1 = Address::generate(&env);
         let account2 = Address::generate(&env);
 
-        TokenBalanceResolver::initialize(env.clone(), admin.clone());
+        let resolver = env.register(TokenBalanceResolver, ());
+        let client = TokenBalanceResolverClient::new(&env, &resolver);
 
-        mock_token::MockToken::mint(env.clone(), account1.clone(), 1000);
-        mock_token::MockToken::mint(env.clone(), account2.clone(), 2000);
+        client.initialize(&admin);
+
+        token_client.mint(&account1, &1000);
+        token_client.mint(&account2, &2000);
 
         let ctx1 = TokenBalanceContext {
             token: token.clone(),
@@ -347,16 +388,13 @@ mod test {
             max_balance: 2500,
         };
 
-        let contexts = Vec::from_array(&env, [
-            ctx1.to_xdr(&env),
-            ctx2.to_xdr(&env),
-        ]);
+        let contexts = Vec::from_array(&env, [ctx1.to_xdr(&env), ctx2.to_xdr(&env)]);
 
-        let results = TokenBalanceResolver::check_conditions_batch(env.clone(), contexts);
+        let results = client.check_conditions_batch(&contexts);
 
         assert_eq!(results.len(), 2);
-        assert!(results.get(0).unwrap());  // account1: 1000 in [500, 1500]
-        assert!(results.get(1).unwrap());  // account2: 2000 in [1500, 2500]
+        assert!(results.get(0).unwrap()); // account1: 1000 in [500, 1500]
+        assert!(results.get(1).unwrap()); // account2: 2000 in [1500, 2500]
     }
 
     #[test]
@@ -368,9 +406,12 @@ mod test {
         let token = Address::generate(&env); // Invalid token contract
         let account = Address::generate(&env);
 
-        TokenBalanceResolver::initialize(env.clone(), admin.clone());
+        let resolver = env.register(TokenBalanceResolver, ());
+        let client = TokenBalanceResolverClient::new(&env, &resolver);
 
-let ctx = TokenBalanceContext {
+        client.initialize(&admin);
+
+        let ctx = TokenBalanceContext {
             token: token.clone(),
             account: account.clone(),
             min_balance: 500,
@@ -379,6 +420,6 @@ let ctx = TokenBalanceContext {
         let context = ctx.to_xdr(&env);
 
         // Cross-contract call to invalid address should fail gracefully
-        assert!(!TokenBalanceResolver::check_condition(env.clone(), 1, context));
+        assert!(!client.check_condition(&1, &context));
     }
 }

@@ -70,7 +70,9 @@ fn test_open_deposit_and_cooperative_close() {
     let (channel_id, p1, _p2, sk1, sk2) = open_two_party_channel(&env, &client);
     assert_eq!(channel_id, 1);
 
-    let state = client.get_channel_state(&channel_id).expect("channel opened");
+    let state = client
+        .get_channel_state(&channel_id)
+        .expect("channel opened");
     assert_eq!(state.status, ChannelStatus::Open);
     assert_eq!(state.nonce, 0);
     assert_eq!(state.participants.len(), 2);
@@ -108,10 +110,7 @@ fn test_nonce_must_strictly_increase() {
     let hash_2 = BytesN::from_array(&env, &[2u8; 32]);
     let sig_2 = sign_receipt(&env, &client, &sk1, channel_id, 2, &hash_2);
     client.submit_state_receipt(&channel_id, &p1, &2, &hash_2, &sig_2);
-    assert_eq!(
-        client.get_channel_state(&channel_id).unwrap().nonce,
-        2
-    );
+    assert_eq!(client.get_channel_state(&channel_id).unwrap().nonce, 2);
 
     // A stale (non-increasing) nonce is rejected, so an older signed state can
     // never overwrite a newer one.

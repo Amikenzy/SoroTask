@@ -132,7 +132,8 @@ fn verify_participant_signature(
         .get(idx)
         .unwrap_or_else(|| panic_with_error!(env, Error::ChannelInvalidSignature));
     let payload = receipt_payload(env, state.channel_id, nonce, state_hash);
-    env.crypto().ed25519_verify(&public_key, &payload, signature);
+    env.crypto()
+        .ed25519_verify(&public_key, &payload, signature);
 }
 
 fn require_token(env: &Env) -> Address {

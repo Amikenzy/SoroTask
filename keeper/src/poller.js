@@ -885,69 +885,37 @@ class TaskPoller {
      */
   decodeTaskConfig(scVal) {
     try {
-      // Check if it's an Option::None
-      if (scVal.switch().name === 'scvVoid') {
+      if (!scVal) {
         return null;
       }
 
-      // For Option::Some, unwrap the value
-      let taskVal = scVal;
-      if (scVal.switch().name === 'scvVec') {
-        const vec = scVal.vec();
-        if (vec.length === 0) {
-          return null;
-        }
-        // Option::Some wraps the value in a vec with one element
-        taskVal = vec[0];
+      let val = scVal;
+      if (typeof val === 'string') {
+        val = xdr.ScVal.fromXDR(val, 'base64');
       }
 
-      // TaskConfig is a struct (scvMap)
-      if (taskVal.switch().name !== 'scvMap') {
-        this.logger.warn('Unexpected ScVal type for TaskConfig', { type: taskVal.switch().name });
+      const native = scValToNative(val);
+      if (native === null || native === undefined) {
         return null;
       }
 
-      const map = taskVal.map();
+      const raw = Array.isArray(native) ? native[0] : native;
+      if (!raw || typeof raw !== 'object') {
+        return null;
+      }
+
       const config = {};
-
-      // Extract fields from the map
-      map.forEach(entry => {
-        const key = scValToNative(entry.key());
-        const val = entry.val();
-
-        switch (key) {
-        case 'last_run':
-          config.last_run = Number(scValToNative(val));
-          break;
-        case 'interval':
-          config.interval = Number(scValToNative(val));
-          break;
-        case 'gas_balance':
-          config.gas_balance = Number(scValToNative(val));
-          break;
-        case 'creator':
-          config.creator = scValToNative(val);
-          break;
-        case 'target':
-          config.target = scValToNative(val);
-          break;
-        case 'function':
-          config.function = scValToNative(val);
-          break;
-        case 'args':
-          config.args = scValToNative(val);
-          break;
-        case 'resolver':
-          config.resolver = scValToNative(val);
-          break;
-        case 'whitelist':
-          config.whitelist = scValToNative(val);
-          break;
-        }
-      });
+      if (raw.last_run !== undefined) config.last_run = Number(raw.last_run);
+      if (raw.interval !== undefined) config.interval = Number(raw.interval);
+      if (raw.gas_balance !== undefined) config.gas_balance = Number(raw.gas_balance);
+      if (raw.creator !== undefined) config.creator = raw.creator;
+      if (raw.target !== undefined) config.target = raw.target;
+      if (raw.function !== undefined) config.function = raw.function;
+      if (raw.args !== undefined) config.args = raw.args;
+      if (raw.resolver !== undefined) config.resolver = raw.resolver;
+      if (raw.whitelist !== undefined) config.whitelist = raw.whitelist;
 
       return config;
-
     } catch (error) {
       this.logger.error('Error decoding TaskConfig XDR', { error: error.message });
       return null;

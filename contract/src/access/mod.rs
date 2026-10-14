@@ -55,7 +55,9 @@ pub fn get_admin(env: &Env) -> Option<Address> {
 pub fn grant_role(env: &Env, caller: &Address, target: &Address, mask: u64) {
     caller.require_auth();
     require_admin(env, caller);
-    env.storage().persistent().set(&AccessKey::Role(target.clone()), &mask);
+    env.storage()
+        .persistent()
+        .set(&AccessKey::Role(target.clone()), &mask);
     emit_audit(env, Symbol::new(env, "role_grant"), caller, target, mask, 0);
 }
 
@@ -63,7 +65,9 @@ pub fn grant_role(env: &Env, caller: &Address, target: &Address, mask: u64) {
 pub fn revoke_role(env: &Env, caller: &Address, target: &Address) {
     caller.require_auth();
     require_admin(env, caller);
-    env.storage().persistent().remove(&AccessKey::Role(target.clone()));
+    env.storage()
+        .persistent()
+        .remove(&AccessKey::Role(target.clone()));
     emit_audit(env, Symbol::new(env, "role_revoke"), caller, target, 0, 0);
 }
 
@@ -71,13 +75,7 @@ pub fn revoke_role(env: &Env, caller: &Address, target: &Address) {
 ///
 /// The delegated mask MUST be a subset of the caller's effective mask; otherwise
 /// the call panics. This enforces "operators cannot exceed delegated permissions".
-pub fn delegate(
-    env: &Env,
-    caller: &Address,
-    delegatee: &Address,
-    mask: u64,
-    expires_at: u32,
-) {
+pub fn delegate(env: &Env, caller: &Address, delegatee: &Address, mask: u64, expires_at: u32) {
     caller.require_auth();
     let caller_mask = effective_mask(env, caller);
     if mask & !caller_mask != 0 {
@@ -87,16 +85,34 @@ pub fn delegate(
         panic!("delegation already expired");
     }
     let d = Delegation { mask, expires_at };
-    env.storage().persistent().set(&AccessKey::Delegation(delegatee.clone()), &d);
-    emit_audit(env, Symbol::new(env, "role_delegate"), caller, delegatee, mask, expires_at);
+    env.storage()
+        .persistent()
+        .set(&AccessKey::Delegation(delegatee.clone()), &d);
+    emit_audit(
+        env,
+        Symbol::new(env, "role_delegate"),
+        caller,
+        delegatee,
+        mask,
+        expires_at,
+    );
 }
 
 /// Revoke a delegation previously granted to `delegatee`.
 pub fn revoke_delegation(env: &Env, caller: &Address, delegatee: &Address) {
     caller.require_auth();
     require_admin(env, caller);
-    env.storage().persistent().remove(&AccessKey::Delegation(delegatee.clone()));
-    emit_audit(env, Symbol::new(env, "role_undelegate"), caller, delegatee, 0, 0);
+    env.storage()
+        .persistent()
+        .remove(&AccessKey::Delegation(delegatee.clone()));
+    emit_audit(
+        env,
+        Symbol::new(env, "role_undelegate"),
+        caller,
+        delegatee,
+        0,
+        0,
+    );
 }
 
 /// Compute the effective permission mask for `who`, honoring expiry.

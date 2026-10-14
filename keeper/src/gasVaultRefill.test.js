@@ -144,7 +144,7 @@ describe('TreasuryRefillChannel (issue #1215)', () => {
     expect(result.reason).toBe('treasury_refill_requested');
     expect(result.treasury.txHash).toBe('treasury-tx');
     expect(treasuryChannel.requestTopUp).toHaveBeenCalledWith(
-      expect.objectContaining({ amountXlm: 70 }), // target 100 - balance 10
+      expect.objectContaining({ amountXlm: 90 }), // target 100 - balance 10
     );
   });
 

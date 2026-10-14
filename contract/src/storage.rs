@@ -1,8 +1,5 @@
 /// Normalized task storage layout — decoupled sub-keys for gas-efficient reads.
-
-use soroban_sdk::{Address, Bytes, BytesN, Env, Symbol, Vec, Val};
-
-use soroban_sdk::{Address, Env, Symbol, Val, Vec};
+use soroban_sdk::{Address, Bytes, BytesN, Env, Symbol, Val, Vec};
 
 use crate::DataKey;
 use crate::TaskConfig;
@@ -103,7 +100,11 @@ pub fn schema_layout_hash(env: &Env, version: u32) -> Option<BytesN<32>> {
         2 => b"SoroTaskSchema:v2:TaskMeta(creator,interval,last_run,gas_balance,is_active,blocked_by,resolver,whitelist,yield_strategy,permissions);TaskPayload(target,function,args);TaskStats(run_count,failure_count,last_ledger)",
         _ => return None,
     };
-    Some(env.crypto().sha256(&Bytes::from_slice(env, descriptor)).into())
+    Some(
+        env.crypto()
+            .sha256(&Bytes::from_slice(env, descriptor))
+            .into(),
+    )
 }
 
 /// Returns the stored schema fingerprint, deriving it for legacy instances.
@@ -230,7 +231,7 @@ pub fn save_task_split(env: &Env, task_id: u64, config: &TaskConfig) {
     env.storage()
         .persistent()
         .set(&DataKey::TaskMeta(task_id), &meta);
-    
+
     // TaskPayload → Persistent (static config, rarely changes)
     env.storage()
         .persistent()
@@ -277,12 +278,12 @@ pub fn record_successful_run(env: &Env, task_id: u64, last_run: u64) {
 pub fn is_task_retired(env: &Env, task_id: u64) -> bool {
     if let Some(meta) = load_task_meta(env, task_id) {
         let stats = load_task_stats(env, task_id);
-        
+
         // Check max_runs
         if meta.max_runs > 0 && stats.run_count >= meta.max_runs {
             return true;
         }
-        
+
         // Check expiration
         if meta.expiration_timestamp > 0 && env.ledger().timestamp() >= meta.expiration_timestamp {
             return true;
@@ -306,13 +307,15 @@ pub fn log_execution_trace(
         success,
         gas_used,
     };
-    
+
     // Store in temporary storage with auto-expiry
     let log_key = DataKey::ExecutionLog(task_id, env.ledger().timestamp());
     env.storage().temporary().set(&log_key, &log);
-    
+
     // Set TTL for 7 days (approx 604800 seconds / 5 sec per ledger = ~120960 ledgers)
-    env.storage().temporary().extend_ttl(&log_key, 120960, 120960);
+    env.storage()
+        .temporary()
+        .extend_ttl(&log_key, 120960, 120960);
 }
 
 /// Bumps task TTL to prevent archival — invoked by keepers with gas rebates.
@@ -320,16 +323,24 @@ pub fn bump_task_ttl(env: &Env, task_id: u64) {
     let meta_key = DataKey::TaskMeta(task_id);
     let payload_key = DataKey::TaskPayload(task_id);
     let stats_key = DataKey::TaskStats(task_id);
-    
+
     // Check if TTL is below threshold and extend if needed
     if env.storage().persistent().has(&meta_key) {
-        env.storage().persistent().extend_ttl(&meta_key, MIN_THRESHOLD_LEDGERS, EXTEND_TO_LEDGERS);
+        env.storage()
+            .persistent()
+            .extend_ttl(&meta_key, MIN_THRESHOLD_LEDGERS, EXTEND_TO_LEDGERS);
     }
     if env.storage().persistent().has(&payload_key) {
-        env.storage().persistent().extend_ttl(&payload_key, MIN_THRESHOLD_LEDGERS, EXTEND_TO_LEDGERS);
+        env.storage().persistent().extend_ttl(
+            &payload_key,
+            MIN_THRESHOLD_LEDGERS,
+            EXTEND_TO_LEDGERS,
+        );
     }
     if env.storage().persistent().has(&stats_key) {
-        env.storage().persistent().extend_ttl(&stats_key, MIN_THRESHOLD_LEDGERS, EXTEND_TO_LEDGERS);
+        env.storage()
+            .persistent()
+            .extend_ttl(&stats_key, MIN_THRESHOLD_LEDGERS, EXTEND_TO_LEDGERS);
     }
 }
 
@@ -355,7 +366,7 @@ pub fn check_task_ready(env: &Env, task_id: u64, now: u64) -> bool {
 }
 
 /// -----------------------------------------------------------------------------
-	/// Bitmask Role-Based Access Control (RBAC) helpers.
+/// Bitmask Role-Based Access Control (RBAC) helpers.
 /// -----------------------------------------------------------------------------
 
 /// Return the raw delegation record for `address`, if any.
@@ -430,7 +441,7 @@ pub fn revoke_role(env: &Env, address: &Address) {
 }
 
 /// -----------------------------------------------------------------------------
-	/// Cryptographic audit log emission.
+/// Cryptographic audit log emission.
 /// -----------------------------------------------------------------------------
 
 /// Emit a cryptographically bindable audit event for a role change.
@@ -446,7 +457,14 @@ pub fn emit_role_audit(
 ) {
     env.events().publish(
         (Symbol::new(env, "role_audit"),),
-        (actor.clone(), address.clone(), bitmask, expires_at, operation, env.ledger().sequence()),
+        (
+            actor.clone(),
+            address.clone(),
+            bitmask,
+            expires_at,
+            operation,
+            env.ledger().sequence(),
+        ),
     );
 }
 
@@ -472,5 +490,7 @@ pub fn migrate_legacy_tasks(env: &Env) {
 
 /// Initialize contract storage configuration (instance storage).
 pub fn init_contract_storage(env: &Env) {
-    env.storage().instance().set(&DataKey::StorageSchemaVersion, &STORAGE_SCHEMA_VERSION);
+    env.storage()
+        .instance()
+        .set(&DataKey::StorageSchemaVersion, &STORAGE_SCHEMA_VERSION);
 }

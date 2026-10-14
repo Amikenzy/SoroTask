@@ -22,7 +22,7 @@ const FailureCategory = Object.freeze({
 const FAILURE_CATEGORY_PATTERNS = [
   {
     category: FailureCategory.INSUFFICIENT_ESCROW,
-    pattern: /insufficient[_ -]?escrow|escrow[_ -]?(?:balance|funding|funded|missing|too low)|not enough gas/i,
+    pattern: /insufficient[_ -]?escrow|escrow[_ -]?(?:balance|funding|funded|missing|too low|empty)|not enough gas/i,
   },
   {
     category: FailureCategory.TARGET_REVERTED,
@@ -143,14 +143,15 @@ class DeadLetterQueue extends EventEmitter {
       return;
     }
 
+    if (fs.existsSync(DEAD_LETTER_FILE)) {
+      this.logger.info('Skipping PostgreSQL dead-letter hydration; file state is newer');
+      return;
+    }
+
     try {
       const state = await this.pgStore.loadState();
       if (!state) {
         this.logger.info('PostgreSQL dead-letter store empty; starting fresh');
-        return;
-      }
-      if (fs.existsSync(DEAD_LETTER_FILE)) {
-        this.logger.info('Skipping PostgreSQL dead-letter hydration; file state is newer');
         return;
       }
 
@@ -765,21 +766,22 @@ class DeadLetterQueue extends EventEmitter {
    */
   _shouldQuarantine(taskId) {
     const history = this.failureHistory.get(taskId) || [];
-    
-    // Check if failure count exceeds threshold
-    if (history.length >= this.config.maxFailures) {
-      // Check if there are any non-retryable errors
-      const hasNonRetryable = history.some(
-        f => f.errorClassification === ErrorClassification.NON_RETRYABLE,
-      );
-
-      // Quarantine if:
-      // 1. Non-retryable error detected (immediate quarantine), OR
-      // 2. Max consecutive failures exceeded
-      return hasNonRetryable || history.length >= this.config.maxFailures;
+    if (history.length === 0) {
+      return false;
     }
 
-    return false;
+    const latestAttempt = history[history.length - 1].attempt || 1;
+
+    // Check if there are any non-retryable errors
+    const hasNonRetryable = history.some(
+      f => f.errorClassification === ErrorClassification.NON_RETRYABLE,
+    );
+
+    // Quarantine if:
+    // 1. Non-retryable error detected (immediate quarantine), OR
+    // 2. Max consecutive failures exceeded, OR
+    // 3. Attempt count reaches maxFailures
+    return hasNonRetryable || history.length >= this.config.maxFailures || latestAttempt >= this.config.maxFailures;
   }
 
   /**

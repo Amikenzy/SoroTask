@@ -17,8 +17,6 @@
 //! compute and verify commitment hashes, check reveal windows, and
 //! validate commitment ownership.
 
-#![no_std]
-
 use soroban_sdk::{xdr::ToXdr, Address, Bytes, BytesN, Env};
 
 /// Compute the canonical commitment hash from its preimage components.

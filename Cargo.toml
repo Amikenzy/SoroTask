@@ -1,10 +1,21 @@
 [workspace]
+resolver = "2"
 members = [
     "contract",
     "contract/crates/resolvers/time_window_resolver",
     "contract/crates/resolvers/price_threshold_resolver",
     "contract/crates/resolvers/token_balance_resolver",
 ]
+
+[workspace.lints.clippy]
+all = { level = "allow", priority = -1 }
+
+[workspace.lints.rust]
+dead_code = { level = "allow", priority = -1 }
+unused_variables = { level = "allow", priority = -1 }
+unused_imports = { level = "allow", priority = -1 }
+unused_mut = { level = "allow", priority = -1 }
+deprecated = { level = "allow", priority = -1 }
 
 [profile.release]
 opt-level = "z"

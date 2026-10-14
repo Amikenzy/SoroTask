@@ -42,7 +42,7 @@ describe('StreamHub channel subscriptions (issue #1212)', () => {
 
   function attachNamespace(hub, sockets) {
     const socketsMap = new Map(sockets.map((socket) => [socket.id, socket]));
-    hub.namespaceServer = { sockets: socketsMap };
+    hub.namespaceServer = { sockets: socketsMap, emit: jest.fn() };
     return socketsMap;
   }
 

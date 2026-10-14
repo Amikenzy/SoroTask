@@ -59,6 +59,8 @@ fn base_config(env: &Env, target: Address) -> TaskConfig {
         is_active: true,
         blocked_by: Vec::new(env),
         permissions: 15,
+        expiration_timestamp: 0,
+        max_runs: 0,
     }
 }
 

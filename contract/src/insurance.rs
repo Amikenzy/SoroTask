@@ -31,9 +31,10 @@ pub fn record_premium(env: &Env, amount: i128) {
         .instance()
         .get(&DataKey::InsuranceVaultBalance)
         .unwrap_or(0);
-    env.storage()
-        .instance()
-        .set(&DataKey::InsuranceVaultBalance, &reported.saturating_add(amount));
+    env.storage().instance().set(
+        &DataKey::InsuranceVaultBalance,
+        &reported.saturating_add(amount),
+    );
 }
 
 pub fn record_claim_payment(env: &Env, amount: i128) {
@@ -49,9 +50,10 @@ pub fn record_claim_payment(env: &Env, amount: i128) {
         .instance()
         .get(&DataKey::InsuranceVaultBalance)
         .unwrap_or(0);
-    env.storage()
-        .instance()
-        .set(&DataKey::InsuranceVaultBalance, &reported.saturating_sub(amount));
+    env.storage().instance().set(
+        &DataKey::InsuranceVaultBalance,
+        &reported.saturating_sub(amount),
+    );
 }
 
 pub fn claimable_balance(env: &Env) -> i128 {

@@ -29,6 +29,30 @@ export type ContractErrorCategory =
   // Catchall
   | "UNKNOWN";
 
+export const ALL_CONTRACT_ERROR_CATEGORIES: ContractErrorCategory[] = [
+  "WALLET_NOT_INSTALLED",
+  "WALLET_LOCKED",
+  "WALLET_REJECTED",
+  "WRONG_NETWORK",
+  "INSUFFICIENT_BALANCE",
+  "INSUFFICIENT_FEE",
+  "BAD_SEQUENCE",
+  "BAD_AUTH",
+  "TX_TOO_LATE",
+  "TX_TOO_EARLY",
+  "DUPLICATE_TRANSACTION",
+  "SIMULATION_FAILED",
+  "CONTRACT_REVERT",
+  "INVALID_ARGS",
+  "INSUFFICIENT_GAS",
+  "STATE_EXPIRED",
+  "NETWORK_ERROR",
+  "TIMEOUT",
+  "RATE_LIMITED",
+  "SERVER_ERROR",
+  "UNKNOWN",
+];
+
 export type ContractErrorAction =
   | "retry"
   | "wait"

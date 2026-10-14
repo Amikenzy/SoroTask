@@ -13,9 +13,9 @@
 extern crate std;
 
 use crate::{
-    mempool::compute_commitment_hash, DataKey, ExecutionCommitment,
-    COMMIT_REVEAL_WINDOW_LEDGERS, MIN_COMMIT_BOND, SoroTaskContract, SoroTaskContractClient,
-    TaskConfig,
+    mempool::compute_commitment_hash, DataKey, ExecutionCommitment, SoroTaskContract,
+    SoroTaskContractClient, TaskConfig, COMMIT_REVEAL_WINDOW_LEDGERS, MIN_COMMIT_BOND,
+    PERM_REQUIRE_COMMITMENT,
 };
 
 use soroban_sdk::{
@@ -59,7 +59,9 @@ fn base_config(env: &Env, target: Address) -> TaskConfig {
         whitelist: Vec::new(env),
         is_active: true,
         blocked_by: Vec::new(env),
-        permissions: 15,
+        permissions: 15 | PERM_REQUIRE_COMMITMENT,
+        expiration_timestamp: 0,
+        max_runs: 0,
     }
 }
 
@@ -322,5 +324,8 @@ fn test_execute_without_commitment_reverts() {
     let keeper = Address::generate(&env);
     // No commit_execution — direct execute must fail with CommitmentRequired
     let res = client.try_execute(&keeper, &task_id);
-    assert!(res.is_err(), "execute without commitment must revert with CommitmentRequired");
+    assert!(
+        res.is_err(),
+        "execute without commitment must revert with CommitmentRequired"
+    );
 }

@@ -378,9 +378,9 @@ describe('createDefaultFilterChain', () => {
     expect(chain).toBeInstanceOf(TaskFilterChain);
   });
 
-  it('registers exactly 6 built-in filters', () => {
+  it('registers exactly 7 built-in filters', () => {
     const chain = createDefaultFilterChain();
-    expect(chain._filters).toHaveLength(6);
+    expect(chain._filters).toHaveLength(7);
   });
 
   it('filters are registered in correct order', () => {
@@ -392,6 +392,7 @@ describe('createDefaultFilterChain', () => {
       'cachedTimingFilter',
       'idempotencyLockFilter',
       'circuitBreakerFilter',
+      'liquidityPauseFilter',
       'quarantineFilter',
     ]);
   });
@@ -471,11 +472,11 @@ describe('createDefaultFilterChain', () => {
   });
 
   describe('extensibility — custom filter can be appended', () => {
-    it('addFilter appends after the six built-ins', () => {
+    it('addFilter appends after the built-ins', () => {
       const chain = createDefaultFilterChain();
       chain.addFilter('myCustomFilter', () => ({ pass: true, reason: 'ok' }));
-      expect(chain._filters).toHaveLength(7);
-      expect(chain._filters[6].name).toBe('myCustomFilter');
+      expect(chain._filters).toHaveLength(8);
+      expect(chain._filters[7].name).toBe('myCustomFilter');
     });
 
     it('custom filter participates in rejection correctly', () => {

@@ -48,14 +48,14 @@ pub fn submit_optimistic_claim(
     state_root: BytesN<32>,
 ) -> Result<u64, Error> {
     keeper.require_auth();
-    
+
     if bond < MIN_OPTIMISTIC_BOND {
         return Err(Error::InsufficientBalance);
     }
-    
+
     // Generate claim ID
     let claim_id = generate_claim_id(env);
-    
+
     // Create claim record
     let claim = OptimisticClaim {
         task_id,
@@ -67,12 +67,12 @@ pub fn submit_optimistic_claim(
         finalized: false,
         challenged: false,
     };
-    
+
     // Store claim
     env.storage()
         .persistent()
         .set(&DataKey::OptimisticClaim(claim_id), &claim);
-    
+
     Ok(claim_id)
 }
 
@@ -84,24 +84,24 @@ pub fn challenge_claim(
     proof_data: Bytes,
 ) -> Result<(), Error> {
     challenger.require_auth();
-    
+
     let mut claim: OptimisticClaim = env
         .storage()
         .persistent()
         .get(&DataKey::OptimisticClaim(claim_id))
         .ok_or(Error::NoOptimisticClaim)?;
-    
+
     // Check if claim is already finalized
     if claim.finalized {
         return Err(Error::ChallengeWindowClosed);
     }
-    
+
     // Check if still within challenge window
     let current_ledger = env.ledger().sequence();
     if current_ledger > claim.submitted_at_ledger + CHALLENGE_WINDOW_LEDGERS {
         return Err(Error::ChallengeWindowClosed);
     }
-    
+
     // Store fraud proof
     let proof = FraudProof {
         claim_id,
@@ -109,17 +109,17 @@ pub fn challenge_claim(
         proof_data,
         submitted_at_ledger: current_ledger,
     };
-    
+
     env.storage()
         .persistent()
         .set(&DataKey::FraudProof(claim_id), &proof);
-    
+
     // Mark claim as challenged
     claim.challenged = true;
     env.storage()
         .persistent()
         .set(&DataKey::OptimisticClaim(claim_id), &claim);
-    
+
     Ok(())
 }
 
@@ -130,63 +130,60 @@ pub fn finalize_claim(env: &Env, claim_id: u64) -> Result<(), Error> {
         .persistent()
         .get(&DataKey::OptimisticClaim(claim_id))
         .ok_or(Error::NoOptimisticClaim)?;
-    
+
     // Check if already finalized
     if claim.finalized {
         return Ok(());
     }
-    
+
     // Check if challenge window has passed
     let current_ledger = env.ledger().sequence();
     if current_ledger <= claim.submitted_at_ledger + CHALLENGE_WINDOW_LEDGERS {
         return Err(Error::ChallengeWindowActive);
     }
-    
+
     // Check if claim was challenged
     if claim.challenged {
         return Err(Error::FraudProofInvalid);
     }
-    
+
     // Finalize claim
     claim.finalized = true;
     env.storage()
         .persistent()
         .set(&DataKey::OptimisticClaim(claim_id), &claim);
-    
+
     Ok(())
 }
 
 /// Slashes keeper bond for fraudulent claim.
-pub fn slash_fraudulent_claim(
-    env: &Env,
-    claim_id: u64,
-) -> Result<(Address, i128), Error> {
+pub fn slash_fraudulent_claim(env: &Env, claim_id: u64) -> Result<(Address, i128), Error> {
     let claim: OptimisticClaim = env
         .storage()
         .persistent()
         .get(&DataKey::OptimisticClaim(claim_id))
         .ok_or(Error::NoOptimisticClaim)?;
-    
+
     // Check if claim was challenged
     if !claim.challenged {
         return Err(Error::FraudProofInvalid);
     }
-    
+
     // Load fraud proof
     let proof: FraudProof = env
         .storage()
         .persistent()
         .get(&DataKey::FraudProof(claim_id))
         .ok_or(Error::FraudProofInvalid)?;
-    
+
     // Verify fraud proof (simplified - real implementation would verify Merkle proofs)
     if !verify_fraud_proof(env, &claim, &proof) {
         return Err(Error::FraudProofInvalid);
     }
-    
+
     // Slash keeper bond - transfer to challenger
     let slashed_bond = claim.bond;
-    
+
     // Remove claim
     env.storage()
         .persistent()
@@ -194,7 +191,7 @@ pub fn slash_fraudulent_claim(
     env.storage()
         .persistent()
         .remove(&DataKey::FraudProof(claim_id));
-    
+
     Ok((proof.challenger, slashed_bond))
 }
 
@@ -204,7 +201,7 @@ fn verify_fraud_proof(env: &Env, claim: &OptimisticClaim, proof: &FraudProof) ->
     // 1. Verify Merkle proof against state_root
     // 2. Re-execute state transition step-by-step
     // 3. Compare computed hash with claimed result_hash
-    
+
     // For now, we assume proof_data contains verification info
     proof.proof_data.len() > 0
 }
@@ -212,17 +209,11 @@ fn verify_fraud_proof(env: &Env, claim: &OptimisticClaim, proof: &FraudProof) ->
 /// Generates a unique claim ID.
 fn generate_claim_id(env: &Env) -> u64 {
     let counter_key = DataKey::OptimisticClaimCounter;
-    let counter: u64 = env
-        .storage()
-        .persistent()
-        .get(&counter_key)
-        .unwrap_or(0);
-    
+    let counter: u64 = env.storage().persistent().get(&counter_key).unwrap_or(0);
+
     let new_counter = counter + 1;
-    env.storage()
-        .persistent()
-        .set(&counter_key, &new_counter);
-    
+    env.storage().persistent().set(&counter_key, &new_counter);
+
     new_counter
 }
 
@@ -248,12 +239,12 @@ pub fn is_claim_challengeable(env: &Env, claim_id: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn challenge_window_constant() {
         assert_eq!(CHALLENGE_WINDOW_LEDGERS, 50);
     }
-    
+
     #[test]
     fn min_bond_constant() {
         assert_eq!(MIN_OPTIMISTIC_BOND, 1000);

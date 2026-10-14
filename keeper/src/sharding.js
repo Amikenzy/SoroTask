@@ -388,7 +388,7 @@ function resolveShardConfigFromEnv(env = process.env) {
 
   return normalizeShardConfig({
     shardCount: Number.isFinite(shardCount) ? shardCount : 1,
-    shardIndex: Number.isFinite(shardIndex) ? shareIndex : 0,
+    shardIndex: Number.isFinite(shardIndex) ? shardIndex : 0,
     shardLabel: env.KEEPER_SHARD_LABEL,
   });
 }

@@ -37,6 +37,7 @@
 const dns = require('dns').promises;
 const https = require('https');
 const net = require('net');
+const Response = globalThis.Response || require('node-fetch').Response;
 
 /** Schemes we are willing to make an outbound request with. */
 const ALLOWED_PROTOCOLS = new Set(['https:']);

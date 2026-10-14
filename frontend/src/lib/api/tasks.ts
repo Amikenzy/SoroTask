@@ -427,6 +427,7 @@ export async function executeTask(
   }
 
   return { id, status: "running" };
+}
 
 // Batch lifecycle mutations — one atomic transaction per batch action
 

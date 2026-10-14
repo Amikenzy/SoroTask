@@ -34,6 +34,7 @@ describe('WalletBalanceMonitor burn-rate & liquidity pressure (issue #1215)', ()
     const monitor = new WalletBalanceMonitor(baseOptions({ getBalanceFn: async () => 19, sendAlertFn }));
     // Issue's Medium layer: warn at < 20 XLM.
     monitor.warningThreshold = 20;
+    monitor.criticalThreshold = 10;
 
     const result = await monitor.checkNow();
 
@@ -56,9 +57,9 @@ describe('WalletBalanceMonitor burn-rate & liquidity pressure (issue #1215)', ()
     monitor._recordBalanceSample(80);
     monitor._recordBalanceSample(70);
     jest.advanceTimersByTime(30 * 60 * 1000); // one hour since the first sample
-    monitor._recordBalanceSample(60);
+    monitor._recordBalanceSample(70);
 
-    // 100 -> 30 XLM over one hour = 70 XLM/hour; the mid-sample must not
+    // 100 -> 70 XLM over one hour = 30 XLM/hour; the mid-sample must not
     // change the oldest-vs-newest slope.
     expect(monitor.getBurnRateXlmPerHour()).toBeCloseTo(30, 6);
 

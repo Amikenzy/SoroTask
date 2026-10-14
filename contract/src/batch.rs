@@ -82,12 +82,7 @@ pub(crate) fn publish_batch_task_event(
         symbol_short!("FAILED")
     };
     env.events().publish(
-        (
-            symbol_short!("BatchTask"),
-            status,
-            keeper.clone(),
-            task_id,
-        ),
+        (symbol_short!("BatchTask"), status, keeper.clone(), task_id),
         error_code,
     );
 }
@@ -104,6 +99,11 @@ pub(crate) fn publish_batch_summary_event(
             symbol_short!("SUMMARY"),
             keeper.clone(),
         ),
-        (summary.total, summary.succeeded, summary.failed, summary.outcomes.clone()),
+        (
+            summary.total,
+            summary.succeeded,
+            summary.failed,
+            summary.outcomes.clone(),
+        ),
     );
 }

@@ -156,16 +156,10 @@ pub fn execute_upgrade(env: &Env, admin: &Address) {
 
     let new_version = proposal.new_version;
 
-migrate_storage(env, proposal.migration_version);
+    migrate_storage(env, proposal.migration_version);
     if storage::schema_hash(env) != Some(proposal.target_schema_hash.clone()) {
         panic_with_error!(env, Error::InvalidUpgradeVersion);
     }
-
-migrate_storage(
-        env,
-        old_version,
-        proposal.migration_version.max(STORAGE_SCHEMA_VERSION),
-    );
 
     let upgrade_id = config.upgrade_count.saturating_add(1);
     let record = UpgradeRecord {

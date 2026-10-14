@@ -1,5 +1,5 @@
-use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env};
 use crate::Error;
+use soroban_sdk::{contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,10 +24,16 @@ pub fn configure_ccip(env: &Env, router: Address) {
 }
 
 pub fn whitelist_chain(env: &Env, selector: u64, whitelisted: bool) {
-    env.storage().instance().set(&CcipDataKey::ChainWhitelisted(selector), &whitelisted);
+    env.storage()
+        .instance()
+        .set(&CcipDataKey::ChainWhitelisted(selector), &whitelisted);
 }
 
-pub fn receive_ccip_message(env: &Env, caller: Address, msg: CrossChainMessage) -> Result<(), Error> {
+pub fn receive_ccip_message(
+    env: &Env,
+    caller: Address,
+    msg: CrossChainMessage,
+) -> Result<(), Error> {
     caller.require_auth();
 
     let router: Address = env
@@ -51,13 +57,20 @@ pub fn receive_ccip_message(env: &Env, caller: Address, msg: CrossChainMessage) 
     }
 
     // Cryptographic message ID hashing
-    let msg_hash = env.crypto().keccak256(&msg.to_xdr(env));
+    let msg_hash: BytesN<32> = env.crypto().keccak256(&msg.clone().to_xdr(env)).into();
 
     // Replay-attack cache
-    if env.storage().persistent().has(&CcipDataKey::ExecutedMessage(msg_hash.clone())) {
+    if env
+        .storage()
+        .persistent()
+        .has(&CcipDataKey::ExecutedMessage(msg_hash.clone()))
+    {
         return Err(Error::MessageAlreadyExecuted);
     }
-    env.storage().persistent().set(&CcipDataKey::ExecutedMessage(msg_hash.clone()), &msg.message_id);
+    env.storage().persistent().set(
+        &CcipDataKey::ExecutedMessage(msg_hash.clone()),
+        &msg.message_id,
+    );
 
     // Store executed nonces in bit-packed bloom filters
     let block_index = msg.nonce / 64;
@@ -71,9 +84,11 @@ pub fn receive_ccip_message(env: &Env, caller: Address, msg: CrossChainMessage) 
     if (bloom_block & (1 << bit_index)) != 0 {
         return Err(Error::MessageAlreadyExecuted);
     }
-    
+
     bloom_block |= 1 << bit_index;
-    env.storage().persistent().set(&CcipDataKey::NonceBloom(block_index), &bloom_block);
+    env.storage()
+        .persistent()
+        .set(&CcipDataKey::NonceBloom(block_index), &bloom_block);
 
     // Auto-pruning via TTL
     env.storage().persistent().extend_ttl(

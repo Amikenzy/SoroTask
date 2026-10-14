@@ -31,7 +31,14 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock') }}
 
       - name: Install Stellar CLI
-        run: cargo install --locked stellar-cli
+        run: |
+          mkdir -p ~/.cargo/bin
+          ARCH=$(uname -m)
+          curl -fsSL "https://github.com/stellar/stellar-cli/releases/download/v28.1.0/stellar-cli-28.1.0-${ARCH}-unknown-linux-gnu.tar.gz" | tar -xzf - -C ~/.cargo/bin || {
+            sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+            cargo install --locked stellar-cli
+          }
+          stellar --version
 
       - name: Check Formatting
         run: cargo fmt --all --check

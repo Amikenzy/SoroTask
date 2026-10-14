@@ -4,8 +4,8 @@
 //! [start_time, end_time) window. It is useful for time-gated tasks such as
 //! scheduled maintenance windows, auction periods, or time-limited promotions.
 
-use soroban_sdk::{contract, contractimpl, Env, Bytes, Address, Symbol, Vec, Val, IntoVal};
-use soro_task_contract::resolver::{TimeWindowContext, utils};
+use soro_task_contract::resolver::{utils, TimeWindowContext};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, IntoVal, Symbol, Val, Vec};
 
 #[contract]
 pub struct TimeWindowResolver;
@@ -37,20 +37,18 @@ impl TimeWindowResolver {
         }
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Config, &TimeWindowConfig {
-            start_time,
-            end_time,
-            timezone_offset,
-        });
+        env.storage().instance().set(
+            &DataKey::Config,
+            &TimeWindowConfig {
+                start_time,
+                end_time,
+                timezone_offset,
+            },
+        );
     }
 
     /// Update the time window configuration (admin only).
-    pub fn update_config(
-        env: Env,
-        start_time: u64,
-        end_time: u64,
-        timezone_offset: i64,
-    ) {
+    pub fn update_config(env: Env, start_time: u64, end_time: u64, timezone_offset: i64) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
 
@@ -58,11 +56,14 @@ impl TimeWindowResolver {
             panic!("start_time must be less than end_time");
         }
 
-        env.storage().instance().set(&DataKey::Config, &TimeWindowConfig {
-            start_time,
-            end_time,
-            timezone_offset,
-        });
+        env.storage().instance().set(
+            &DataKey::Config,
+            &TimeWindowConfig {
+                start_time,
+                end_time,
+                timezone_offset,
+            },
+        );
     }
 
     /// Get the current time window configuration.
@@ -93,11 +94,14 @@ impl TimeWindowResolver {
             }
         } else {
             // Fall back to stored configuration
-            env.storage().instance().get(&DataKey::Config).unwrap_or(TimeWindowConfig {
-                start_time: 0,
-                end_time: u64::MAX,
-                timezone_offset: 0,
-            })
+            env.storage()
+                .instance()
+                .get(&DataKey::Config)
+                .unwrap_or(TimeWindowConfig {
+                    start_time: 0,
+                    end_time: u64::MAX,
+                    timezone_offset: 0,
+                })
         };
 
         // Apply timezone offset
@@ -132,17 +136,41 @@ pub struct TimeWindowConfig {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Bytes, Env, Symbol, Vec, xdr::ToXdr, IntoVal, TryIntoVal};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        xdr::ToXdr,
+        Address, Bytes, Env, IntoVal, Symbol, TryIntoVal, Vec,
+    };
 
-    fn invoke_initialize(env: &Env, resolver_addr: &Address, admin: &Address, start: u64, end: u64, tz: i64) {
+    fn invoke_initialize(
+        env: &Env,
+        resolver_addr: &Address,
+        admin: &Address,
+        start: u64,
+        end: u64,
+        tz: i64,
+    ) {
         env.invoke_contract::<()>(
             resolver_addr,
             &Symbol::new(env, "initialize"),
-            Vec::from_array(env, [admin.into_val(env), start.into_val(env), end.into_val(env), tz.into_val(env)]),
+            Vec::from_array(
+                env,
+                [
+                    admin.into_val(env),
+                    start.into_val(env),
+                    end.into_val(env),
+                    tz.into_val(env),
+                ],
+            ),
         );
     }
 
-    fn invoke_check_condition(env: &Env, resolver_addr: &Address, task_id: u64, context: &Bytes) -> bool {
+    fn invoke_check_condition(
+        env: &Env,
+        resolver_addr: &Address,
+        task_id: u64,
+        context: &Bytes,
+    ) -> bool {
         env.invoke_contract(
             resolver_addr,
             &Symbol::new(env, "check_condition"),
@@ -154,7 +182,10 @@ mod test {
         env.invoke_contract::<()>(
             resolver_addr,
             &Symbol::new(env, "update_config"),
-            Vec::from_array(env, [start.into_val(env), end.into_val(env), tz.into_val(env)]),
+            Vec::from_array(
+                env,
+                [start.into_val(env), end.into_val(env), tz.into_val(env)],
+            ),
         );
     }
 

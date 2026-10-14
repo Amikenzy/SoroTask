@@ -1,8 +1,3 @@
-use crate::{
-    SoroTaskContract, SoroTaskContractClient, TaskConfig, BRONZE_EFFECTIVE_STAKE,
-    GOLD_EFFECTIVE_STAKE, SILVER_EFFECTIVE_STAKE,
-};
-
 //! Mathematical & invariant fuzzing harness (Issue #1196).
 //!
 //! Three layers of property coverage:
@@ -29,7 +24,10 @@ use crate::{
 //! issue's definition of done. `fuzz_budget_meets_issue_1196_requirement`
 //! guards that budget against accidental regression.
 
-use crate::{SoroTaskContract, SoroTaskContractClient, TaskConfig};
+use crate::{
+    SoroTaskContract, SoroTaskContractClient, TaskConfig, BRONZE_EFFECTIVE_STAKE,
+    GOLD_EFFECTIVE_STAKE, SILVER_EFFECTIVE_STAKE,
+};
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::*;
 use soroban_sdk::{
@@ -203,6 +201,8 @@ fn new_task_config(env: &Env, creator: Address, target: Address, interval: u32) 
         blocked_by: Vec::new(env),
         yield_strategy: None,
         permissions: 15,
+        expiration_timestamp: 0,
+        max_runs: 0,
     }
 }
 
@@ -479,11 +479,16 @@ proptest! {
     fn test_staking_fee_discount_matches_effective_stake_tier(
         amount in 0i128..200_000i128,
     ) {
-        let (env, client) = setup_with_token();
+        let (env, client) = setup_env_and_client();
+        let token_admin = Address::generate(&env);
+        let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+        client.init(&token_id.address());
         client.init_staking_pool(&0);
         let staker = Address::generate(&env);
 
         if amount > 0 {
+            token_admin_client.mint(&staker, &amount);
             client.stake_tokens(&staker, &amount);
         }
 
@@ -512,24 +517,24 @@ proptest! {
     ) {
         let env = Env::default();
         env.mock_all_auths();
-        
+
         // Use a real token contract for balance tracking
         let token_admin = Address::generate(&env);
         let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
         let token_address = token_id.address();
         let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
-        
+
         let contract_id = env.register(SoroTaskContract, ());
         let client = SoroTaskContractClient::new(&env, &contract_id);
         client.init(&token_address);
-        
+
         let target = env.register(MockTarget, ());
-        
+
         let creator = Address::generate(&env);
         // Mint enough tokens for initial balance + deposit + withdrawal + execution fee
         let total_mint = initial_balance + deposit_amount + withdrawal_amount + execution_fee * 2;
         token_client.mint(&creator, &total_mint);
-        
+
         let config = TaskConfig {
             yield_strategy: None,
             creator: creator.clone(),
@@ -544,18 +549,20 @@ proptest! {
             is_active: false,
             blocked_by: Vec::new(&env),
             permissions: 15,
+            expiration_timestamp: 0,
+            max_runs: 0,
         };
-        
+
         let task_id = client.register(&config);
-        
+
         // Track total deposited by creator
         let mut total_deposited = 0;
-        
+
         // Deposit initial balance + additional gas
         let total_initial_deposit = initial_balance + deposit_amount;
         client.deposit_gas(&task_id, &creator, &total_initial_deposit);
         total_deposited += total_initial_deposit;
-        
+
         // Withdraw some gas (if possible)
         let mut total_withdrawn = 0;
         let task_before_withdraw = client.get_task(&task_id).unwrap();
@@ -563,7 +570,7 @@ proptest! {
             client.withdraw_gas(&task_id, &withdrawal_amount);
             total_withdrawn += withdrawal_amount;
         }
-        
+
         // Execute task if enabled and interval allows
         let mut total_consumed = 0;
         if should_execute {
@@ -571,7 +578,7 @@ proptest! {
             let keeper = Address::generate(&env);
             let task_before = client.get_task(&task_id).unwrap();
             let exec_result = client.try_execute(&keeper, &task_id);
-            
+
             // Check how much was consumed from escrow only if execution succeeded
             if exec_result.is_ok() {
                 let task_after = client.get_task(&task_id).unwrap();
@@ -580,15 +587,15 @@ proptest! {
                 }
             }
         }
-        
+
         // Get final task state
         let final_task = client.get_task(&task_id).unwrap();
-        
+
         // The invariant: Total Deposited == Total Escrowed (final) + Total Consumed + Total Withdrawn
         // Note: In the contract, the task's gas_balance IS the escrowed amount
         // So: total_deposited == final_task.gas_balance + total_consumed + total_withdrawn
         let total_accounted = final_task.gas_balance + total_consumed + total_withdrawn;
-        
+
         prop_assert_eq!(
             total_deposited, total_accounted,
             "Gas deposit invariant violated: deposited={}, escrowed={}, consumed={}, withdrawn={}, accounted={}",

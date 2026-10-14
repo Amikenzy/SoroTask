@@ -75,12 +75,14 @@ fn base_config(env: &Env, target: Address) -> TaskConfig {
         resolver: None,
         interval: 3_600,
         last_run: 0,
-        gas_balance: 0,  // Set to 0 to avoid requiring token transfer at registration
+        gas_balance: 0, // Set to 0 to avoid requiring token transfer at registration
         whitelist: Vec::new(env),
         is_active: true,
         blocked_by: Vec::new(env),
         yield_strategy: None,
         permissions: 15,
+        expiration_timestamp: 0,
+        max_runs: 0,
     }
 }
 
@@ -186,13 +188,13 @@ fn test_register_accepts_bounty_at_minimum() {
     let (env, client) = setup_authed();
     let admin = Address::generate(&env);
     let target = env.register_contract(None, MockTarget);
-    
+
     // Use a real token contract
     let token_admin = Address::generate(&env);
     let token_id = env.register_stellar_asset_contract_v2(token_admin.clone());
     let token_address = token_id.address();
     let token_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_address);
-    
+
     client.init_proxy(&admin, &token_address, &1);
     token_admin_client.mint(&admin, &2000); // Mint tokens to admin for gas
     client.set_min_bounty(&admin, &1_000);
@@ -335,7 +337,7 @@ fn test_execute_whitelisted_keeper_succeeds() {
 
     let creator = Address::generate(&env);
     token_client.mint(&creator, &2000);
-    
+
     let mut cfg = base_config(&env, target);
     cfg.creator = creator.clone();
     cfg.whitelist = vec![&env, keeper.clone()];
@@ -361,7 +363,7 @@ fn test_execute_empty_whitelist_allows_any_keeper() {
 
     let creator = Address::generate(&env);
     token_client.mint(&creator, &2000);
-    
+
     let mut cfg = base_config(&env, target);
     cfg.creator = creator.clone();
     let task_id = client.register(&cfg);
@@ -635,7 +637,7 @@ fn test_modify_task_cannot_transfer_ownership() {
     env.mock_all_auths();
     let id = env.register_contract(None, SoroTaskContract);
     let client = SoroTaskContractClient::new(&env, &id);
-    
+
     let token_admin = Address::generate(&env);
     let token_id = env.register_stellar_asset_contract_v2(token_admin);
     let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
@@ -656,18 +658,8 @@ fn test_modify_task_cannot_transfer_ownership() {
 
     let new_cfg = TaskConfig {
         creator: new_creator.clone(),
-        target: target.clone(),
-        function: Symbol::new(&env, "ping"),
-        args: Vec::new(&env),
-        resolver: None,
         interval: 7_200,
-        last_run: 0,
-        gas_balance: 0,
-        whitelist: Vec::new(&env),
-        is_active: true,
-        blocked_by: Vec::new(&env),
-        yield_strategy: None,
-        permissions: 15,
+        ..base_config(&env, target.clone())
     };
 
     client.modify_task(&task_id, &new_cfg);

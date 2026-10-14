@@ -201,18 +201,18 @@ fn has_cycle_from(env: &Env, root: u64) -> bool {
 /// Validates all dependency rules for a task before execution.
 pub fn check_dependency_rules(env: &Env, task_id: u64) -> Result<(), Error> {
     let rules = load_dependency_rules(env, task_id);
-    
+
     for i in 0..rules.len() {
         let rule = rules.get(i).unwrap();
-        
+
         // Check if parent task exists
         if !crate::task::task_exists(env, rule.task_id) {
             return Err(Error::DependencyNotFound);
         }
-        
+
         // Load parent task status
         let status = load_task_execution_status(env, rule.task_id);
-        
+
         // Validate based on required outcome
         match rule.required_outcome {
             DependencyOutcome::AnyCompletion => {
@@ -231,13 +231,13 @@ pub fn check_dependency_rules(env: &Env, task_id: u64) -> Result<(), Error> {
                 }
             }
         }
-        
+
         // Check minimum completion time
         if status.completed_at < rule.min_completed_at {
             return Err(Error::DependencyBlocked);
         }
     }
-    
+
     Ok(())
 }
 
@@ -278,39 +278,39 @@ pub fn validate_dag_on_registration(
     if parent_ids.len() > MAX_PARENTS as u32 {
         return Err(Error::DependencyLimitExceeded);
     }
-    
+
     // Validate each parent
     for i in 0..parent_ids.len() {
         let parent = parent_ids.get(i).unwrap();
-        
+
         // Check self-dependency
         if parent == task_id {
             return Err(Error::SelfDependency);
         }
-        
+
         // Check if parent exists
         if !crate::task::task_exists(env, parent) {
             return Err(Error::DependencyNotFound);
         }
-        
+
         // Check for cycles
         if would_create_cycle(env, task_id, parent) {
             return Err(Error::CircularDependency);
         }
     }
-    
+
     // Validate depth limit
     if exceeds_depth_limit_with_parents(env, task_id, parent_ids) {
         return Err(Error::DependencyDepthExceeded);
     }
-    
+
     Ok(())
 }
 
 /// Checks if adding parents would exceed depth limit.
 fn exceeds_depth_limit_with_parents(env: &Env, task_id: u64, parents: &Vec<u64>) -> bool {
     let mut max_depth = 0u32;
-    
+
     for i in 0..parents.len() {
         let parent = parents.get(i).unwrap();
         let depth = compute_depth_from(env, parent);
@@ -318,7 +318,7 @@ fn exceeds_depth_limit_with_parents(env: &Env, task_id: u64, parents: &Vec<u64>)
             max_depth = depth;
         }
     }
-    
+
     max_depth + 1 > MAX_DEPENDENCY_DEPTH
 }
 
@@ -326,33 +326,33 @@ fn exceeds_depth_limit_with_parents(env: &Env, task_id: u64, parents: &Vec<u64>)
 fn compute_depth_from(env: &Env, task_id: u64) -> u32 {
     let mut stack = Vec::new(env);
     stack.push_back((task_id, 0u32));
-    
+
     let mut max_depth = 0u32;
     let mut visited = Vec::new(env);
-    
+
     while stack.len() > 0 {
         let (node, depth) = stack.pop_back().unwrap();
-        
+
         if depth > MAX_DEPENDENCY_DEPTH {
             return MAX_DEPENDENCY_DEPTH + 1;
         }
-        
+
         if depth > max_depth {
             max_depth = depth;
         }
-        
+
         if visited.contains(&node) {
             continue;
         }
         visited.push_back(node);
-        
+
         let parents = load_blocked_by(env, node);
         for j in 0..parents.len() {
             let p = parents.get(j).unwrap();
             stack.push_back((p, depth + 1));
         }
     }
-    
+
     max_depth
 }
 

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, BytesN32, Env, Symbol, Val, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Symbol, Val, Vec};
 
 /// Current event schema version emitted by this contract.
 /// Indexers must validate this value against their expected schema.
@@ -10,7 +10,7 @@ pub const EVENT_SCHEMA_VERSION: u32 = 2;
 pub const EVENT_DOMAIN: &str = "SoroTask";
 
 /// Represents the type of state change
-#[contracttpe]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StateChangeType {
     Created,
@@ -28,7 +28,7 @@ pub enum StateChangeType {
 
 /// Identifies a single step in the task execution pipeline.
 /// Each variant maps to a gate or operation inside execute_internal().
-#[contracttpe]
+#[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum ExecutionStep {
@@ -51,7 +51,7 @@ pub enum ExecutionStep {
 }
 
 /// Result of a single execution step.
-#[contracttpe]
+#[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum StepResult {
     Passed,
@@ -60,7 +60,7 @@ pub enum StepResult {
 }
 
 /// Record of one step during task execution.
-#[contracttpe]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionStepRecord {
     pub step: ExecutionStep,
@@ -105,7 +105,7 @@ pub struct StateChangeEvent {
 }
 
 /// Event payload for execution attempts and results
-#[contracttpe]
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct ExecutionLogEvent {
     pub task_id: u64,
@@ -117,7 +117,7 @@ pub struct ExecutionLogEvent {
 }
 
 /// Event payload for access control and authorization logs
-#[contracttpe]
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct AccessLogEvent {
     pub actor: Address,
@@ -149,7 +149,7 @@ pub struct RateLimitExceededEvent {
 }
 
 /// Event payload for encrypted parameter registration
-#[contracttpe]
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct EncryptedParamsRegisteredEvent {
     pub task_id: u64,
@@ -171,7 +171,7 @@ pub struct DelegationPoolEvent {
 }
 
 /// Event payload for user fee discount tier progression
-#[contracttpe]
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct FeeDiscountTierUpdatedEvent {
     pub creator: Address,
@@ -193,7 +193,7 @@ pub struct OracleVolatilityBreachEvent {
 }
 
 /// Event payload for unpausing volatility circuit breaker
-#[contracttpe]
+#[contracttype]
 #[derive(Clone, Debug)]
 pub struct VolatilityCircuitBreakerUnpausedEvent {
     pub admin: Address,
@@ -234,10 +234,6 @@ pub struct RoleChangedEvent {
 
 pub struct EventLogger;
 
-impl events_module_internal {
-    // Namespace placeholder to keep module layout stable.
-}
-
 impl EventLogger {
     /// Builds the canonical 3-topic envelope.
     /// Topic 1: Symbol("SoroTask")
@@ -254,19 +250,13 @@ impl EventLogger {
     /// Packs a gas/status metadata tuple into XDR bytes.
     /// Layout: (status: u32, gas_used: i128, extra: u32)
     fn pack_metadata(env: &Env, status: u32, gas_used: i128, extra: u32) -> Bytes {
+        use soroban_sdk::xdr::ToXdr;
         let tuple: (u32, i128, u32) = (status, gas_used, extra);
-        Bytes::from_val(env, &tuple)
+        tuple.to_xdr(env)
     }
 
     /// Emits a standardized envelope with the given action, task_id and packed metadata.
-    fn emit(
-        env: &Env,
-        action: &str,
-        task_id: u64,
-        status: u32,
-        gas_used: i128,
-        extra: u32,
-    ) {
+    fn emit(env: &Env, action: &str, task_id: u64, status: u32, gas_used: i128, extra: u32) {
         let timestamp = env.ledger().timestamp();
         let packed = Self::pack_metadata(env, status, gas_used, extra);
         let event_data = EventEnvelope {
@@ -510,11 +500,7 @@ impl EventLogger {
             timestamp,
         };
 
-        let topics = (
-            Symbol::new(env, EVENT_DOMAIN),
-            action,
-            keeper,
-        );
+        let topics = (Symbol::new(env, EVENT_DOMAIN), action, keeper);
         env.events().publish(topics, event_data);
     }
 
@@ -592,11 +578,7 @@ impl EventLogger {
             timestamp,
         };
 
-        let topics = (
-            Symbol::new(env, "Role"),
-            action,
-            account,
-        );
+        let topics = (Symbol::new(env, "Role"), action, account);
         env.events().publish(topics, event_data);
     }
 }
