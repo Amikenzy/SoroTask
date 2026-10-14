@@ -78,7 +78,7 @@ jobs:
         # SoroTask contract, exported for the e2e suite and keeper env.
         run: |
           chmod +x scripts/setup-contracts.sh
-          ./scripts/setup-contracts.sh | tee /tmp/setup-contracts.log
+          ./scripts/setup-contracts.sh 2>&1 | tee /tmp/setup-contracts.log
           CONTRACT_ID="$(sed -n 's/^CONTRACT_ID: //p' /tmp/setup-contracts.log | tail -1)"
           if [ -z "$CONTRACT_ID" ]; then
             echo "::error::setup-contracts.sh did not report CONTRACT_ID"

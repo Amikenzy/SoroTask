@@ -39,28 +39,45 @@ if [ ! -f "$WASM_PATH" ]; then
   WASM_PATH="target/wasm32v1-none/release/soro_task_contract.wasm"
 fi
 
-# 4. Deploy Main Contract
-echo "Deploying SoroTask contract..."
+# 4. Install WASM & Deploy Main Contract
+echo "Installing SoroTask contract WASM..."
 stellar contract optimize --wasm "$WASM_PATH" || true
 if [ -f "${WASM_PATH%.wasm}.optimized.wasm" ]; then
   WASM_PATH="${WASM_PATH%.wasm}.optimized.wasm"
 fi
 echo "Using contract WASM at: $WASM_PATH"
 
-CONTRACT_ID=$(stellar --very-verbose contract deploy \
+stellar --very-verbose contract install \
   --wasm "$WASM_PATH" \
   --source deployer \
-  --network local)
+  --network local > /tmp/wasm_hash.txt || {
+    echo "Contract install failed! Checking docker logs for soroban-rpc:"
+    docker logs soroban-rpc --tail 100 || true
+    exit 1
+}
+WASM_HASH=$(cat /tmp/wasm_hash.txt | tail -1)
+echo "WASM_HASH: $WASM_HASH"
 
+echo "Deploying SoroTask contract instance..."
+stellar --very-verbose contract deploy \
+  --wasm-hash "$WASM_HASH" \
+  --source deployer \
+  --network local > /tmp/contract_id.txt || {
+    echo "Contract deploy failed! Checking docker logs for soroban-rpc:"
+    docker logs soroban-rpc --tail 100 || true
+    exit 1
+}
+CONTRACT_ID=$(cat /tmp/contract_id.txt | tail -1)
 echo "CONTRACT_ID: $CONTRACT_ID"
 
 # 5. Deploy Mock Target Contract
 echo "Deploying Mock Target contract..."
-TARGET_ID=$(stellar contract deploy \
-  --wasm "$WASM_PATH" \
+stellar contract deploy \
+  --wasm-hash "$WASM_HASH" \
   --source deployer \
-  --network local || echo "$CONTRACT_ID")
-
+  --network local > /tmp/target_id.txt || true
+TARGET_ID=$(cat /tmp/target_id.txt 2>/dev/null | tail -1)
+if [ -z "$TARGET_ID" ]; then TARGET_ID="$CONTRACT_ID"; fi
 echo "TARGET_ID: $TARGET_ID"
 
 # 6. Deploy Native Token Contract
