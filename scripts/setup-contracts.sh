@@ -26,6 +26,7 @@ for name in deployer keeper creator; do
     sleep 5
   done
 done
+sleep 5
 
 # 3. Build Contracts
 echo "Building contracts..."
