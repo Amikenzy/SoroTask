@@ -30,7 +30,7 @@ done
 # 3. Build Contracts
 echo "Building contracts..."
 if [ ! -f "target/wasm32v1-none/release/soro_task_contract.wasm" ] && [ ! -f "contract/target/wasm32v1-none/release/soro_task_contract.wasm" ]; then
-  (cd contract && stellar contract build --locked)
+  (cd contract && stellar contract build)
 fi
 
 WASM_PATH="contract/target/wasm32v1-none/release/soro_task_contract.wasm"

@@ -56,7 +56,7 @@ jobs:
       - name: Build Smart Contracts
         run: |
           cd contract
-          stellar contract build --locked
+          stellar contract build
 
       - name: Wait for Soroban RPC
         run: |
