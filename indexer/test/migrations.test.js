@@ -60,6 +60,10 @@ test("migration versions are unique and ordered", () => {
     "002_timescaledb_raw_events_retention.sql",
     "003_dashboard_query_indexes.sql",
     "004_timescaledb_executions_hypertable.sql",
+    "005_timescaledb_execution_continuous_aggregates.sql",
+    "006_executions_created_at_and_ledger_index.sql",
+    "007_keeper_dead_letter_postgres.sql",
+    "008_contract_versioning.sql",
   ]);
 
   for (const file of files) {

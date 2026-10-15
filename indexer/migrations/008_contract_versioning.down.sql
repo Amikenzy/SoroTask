@@ -1,4 +1,4 @@
--- Down migration: 004_contract_versioning
+-- Down migration: 008_contract_versioning
 
 DROP INDEX IF EXISTS idx_raw_events_wasm_version;
 

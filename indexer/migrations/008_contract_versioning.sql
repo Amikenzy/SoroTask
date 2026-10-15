@@ -1,4 +1,4 @@
--- Migration: 004_contract_versioning
+-- Migration: 008_contract_versioning
 --
 -- Version indexer schema definitions against the on-chain contract WASM
 -- version hash (issue #799). A smart contract ABI upgrade is only safe once
@@ -32,5 +32,5 @@ CREATE INDEX IF NOT EXISTS idx_raw_events_wasm_version
     ON raw_events (wasm_version_hash, ledger_sequence DESC);
 
 INSERT INTO schema_migrations (version)
-VALUES ('004_contract_versioning')
+VALUES ('008_contract_versioning')
 ON CONFLICT (version) DO NOTHING;

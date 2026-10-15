@@ -94,8 +94,8 @@ jobs:
 
       - name: Generate & Fund Keeper Identity
         run: |
-          SECRET="$(node -e "console.log(require('./keeper/node_modules/@stellar/stellar-sdk').Keypair.random().secret())")"
-          ADDRESS="$(node -e "console.log(require('./keeper/node_modules/@stellar/stellar-sdk').Keypair.fromSecret('$SECRET').publicKey())")"
+          SECRET="$(node -e "console.log(require('@stellar/stellar-sdk').Keypair.random().secret())")"
+          ADDRESS="$(node -e "console.log(require('@stellar/stellar-sdk').Keypair.fromSecret('$SECRET').publicKey())")"
           curl -fsS "http://localhost:8000/friendbot?addr=$ADDRESS" > /dev/null
           echo "KEEPER_SECRET=$SECRET" >> "$GITHUB_ENV"
 

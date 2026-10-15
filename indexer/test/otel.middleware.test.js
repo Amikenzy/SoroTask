@@ -98,6 +98,13 @@ test("GET /api/traces/:traceId returns the recorded span tree", async () => {
   const app = express();
   app.use(requestSpanMiddleware("sorotask-indexer-test"));
   app.get("/api/health", (req, res) => res.json({ ok: true }));
+  app.get("/api/traces/:traceId", (req, res) => {
+    const spans = getTrace(req.params.traceId);
+    if (!spans) {
+      return res.status(404).json({ error: "Trace not found", traceId: req.params.traceId });
+    }
+    return res.json({ traceId: req.params.traceId, spans });
+  });
 
   const server = await startServer(app);
   try {
