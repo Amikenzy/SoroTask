@@ -173,6 +173,28 @@ function loadConfig() {
     vaultKeyName: process.env.VAULT_KEY_NAME || null,
     vaultNamespace: process.env.VAULTNAMESPACE || null,
     kmsAuditLogEnabled: parseBoolean(process.env.KMS_AUDIT_LOG_ENABLED, true),
+    profitabilityGate: {
+      enabled: parseBoolean(process.env.PROFITABILITY_GATE_ENABLED, false),
+      minNetProfitStroops: parseInteger(process.env.PROFITABILITY_MIN_NET_PROFIT_STROOPS, 0),
+    },
+    inboundWebhooks: {
+      enabled: parseBoolean(process.env.INBOUND_WEBHOOKS_ENABLED, false),
+      secret: process.env.INBOUND_WEBHOOK_SECRET || '',
+      defaultKeyId: process.env.INBOUND_WEBHOOK_KEY_ID || 'default',
+      toleranceMs: parseInteger(process.env.INBOUND_WEBHOOK_TOLERANCE_MS, 300000),
+      replayTtlMs: parseInteger(process.env.INBOUND_WEBHOOK_REPLAY_TTL_MS, 600000),
+      maxBodyBytes: parseInteger(process.env.INBOUND_WEBHOOK_MAX_BODY_BYTES, 65536),
+      path: process.env.INBOUND_WEBHOOK_PATH || '/api/webhooks/trigger',
+    },
+    realtimeStreamEnabled: parseBoolean(process.env.REALTIME_STREAM_ENABLED, false),
+    realtimeStreamNamespace: process.env.REALTIME_STREAM_NAMESPACE || 'sorotask',
+    apiGatewayEnabled: parseBoolean(process.env.API_GATEWAY_ENABLED, false),
+    apiGatewayDefaultCapacity: parseInteger(process.env.API_GATEWAY_DEFAULT_CAPACITY, 100),
+    apiGatewayDefaultRefillPerSecond: parseInteger(process.env.API_GATEWAY_DEFAULT_REFILL_PER_SECOND, 10),
+    apiGatewayDefaultBillingUnits: parseInteger(process.env.API_GATEWAY_DEFAULT_BILLING_UNITS, 1),
+    sloPollFreshnessMs: parseInteger(process.env.SLO_POLL_FRESHNESS_MS, 30000),
+    sloExecutionTimelinessMs: parseInteger(process.env.SLO_EXECUTION_TIMELINESS_MS, 60000),
+    resolverFailureMode: process.env.RESOLVER_FAILURE_MODE || 'skip',
   };
 
   return config;

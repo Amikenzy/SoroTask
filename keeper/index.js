@@ -106,7 +106,7 @@ async function main() {
   const gasForecaster = new GasForecaster(createLogger("gas-forecaster"));
   const profitabilityEstimator = new ProfitabilityEstimator({
     logger: createLogger("profitability"),
-    threshold: config.profitabilityGate.minNetProfitStroops,
+    threshold: config.profitabilityGate?.minNetProfitStroops || 0,
   });
   const shardConfig = normalizeShardConfig({
     shardIndex: config.shardIndex,
@@ -417,7 +417,7 @@ async function main() {
     // Issue #781 — profitability gate. Only skips when the forecaster has
     // 'high' confidence (enough historical samples) for this task; with no
     // or thin history it defers to normal execution rather than guessing.
-    if (config.profitabilityGate.enabled) {
+    if (config.profitabilityGate?.enabled) {
       const task = registry.tasks.get(taskId) || registry.tasks.get(String(taskId));
       const forecast = gasForecaster.forecastTaskGas(taskId, Number(task?.gas_balance) || 0);
       if (forecast.confidence === 'high') {
@@ -554,7 +554,7 @@ async function main() {
   };
 
   // Initialize webhook authentication and handler if enabled
-  if (config.inboundWebhooks.enabled) {
+  if (config.inboundWebhooks?.enabled) {
     logger.info("Initializing inbound webhook handler");
     
     const webhookAuthProtocol = new WebhookAuthProtocol({
