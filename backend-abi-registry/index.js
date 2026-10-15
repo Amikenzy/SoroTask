@@ -346,4 +346,4 @@ module.exports.jsonRpcPost = jsonRpcPost;
 module.exports.fetchWasmFromRpc = fetchWasmFromRpc;
 module.exports.buildContractCodeLedgerKey = buildContractCodeLedgerKey;
 
-module.exports = new ABIRegistryService({ signerConfig: { networkPassphrase: process.env.NETWORK_PASSTHRAPE || process.env.STELLAR_NETWORK_PASSTHRAPE } });
+module.exports = new ABIRegistryService({ signerConfig: { networkPassphrase: process.env.NETWORK_PASSPHRASE || process.env.NETWORK_PASSTHRAPE || process.env.STELLAR_NETWORK_PASSPHRASE || process.env.STELLAR_NETWORK_PASSTHRAPE } });

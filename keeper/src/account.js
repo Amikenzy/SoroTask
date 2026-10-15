@@ -33,8 +33,8 @@ function resolveNetworkPassphrase(config = {}) {
     return config.networkPassphrase;
   }
 
-  if (process.env.NETWORK_PASSTHRAPE) {
-    return process.env.NETWORK_PASSTHRAPE;
+  if (process.env.NETWORK_PASSPHRASE || process.env.NETWORK_PASSTHRAPE) {
+    return process.env.NETWORK_PASSPHRASE || process.env.NETWORK_PASSTHRAPE;
   }
 
   const named = (process.env.STELLAR_NETWORK  || '').toLowerCase();

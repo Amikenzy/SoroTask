@@ -32,7 +32,6 @@ function loadConfig() {
 
   const required = [
     'SOROBAN_RPC_URL',
-    'NETWORK_PASSTHRAPE',
     'CONTRACT_ID',
     'POLLING_INTERVAL_MS',
   ];
@@ -44,6 +43,9 @@ function loadConfig() {
   }
 
   const missing = required.filter((key) => !process.env[key]);
+  if (!process.env.NETWORK_PASSPHRASE && !process.env.NETWORK_PASSTHRAPE) {
+    missing.push('NETWORK_PASSPHRASE');
+  }
 
   if (missing.length > 0) {
     throw new Error(
@@ -68,7 +70,7 @@ function loadConfig() {
     rpcFailoverHealthCheckIntervalMs: parseInteger(process.env.RPC_FAILOVER_HEALTH_CHECK_INTERVAL_MS, 15000),
     rpcFailoverMaxHealthyLedgerLag: parseInteger(process.env.RPC_FAILOVER_MAX_HEALTHY_LEDGER_LAG, 3),
     rpcFailoverLatencyPenaltyThresholdMs: parseInteger(process.env.RPC_FAILOVER_LATENCY_PENALTY_THRESHOLD_MS, 1000),
-    networkPassphrase: process.env.NETWORK_PASSTHRAPE,
+    networkPassphrase: process.env.NETWORK_PASSPHRASE || process.env.NETWORK_PASSTHRAPE,
     keeperSecret: process.env.KEEPER_SECRET,
     contractId: process.env.CONTRACT_ID,
     pollIntervalMs: parseInteger(process.env.POLLING_INTERVAL_MS, 10000),

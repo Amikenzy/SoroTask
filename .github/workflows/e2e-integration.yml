@@ -119,6 +119,7 @@ jobs:
           cd keeper
           SOROBAN_RPC_URL=http://localhost:8000/soroban/rpc \
           NETWORK_PASSPHRASE='Standalone Network ; February 2017' \
+          NETWORK_PASSTHRAPE='Standalone Network ; February 2017' \
           CONTRACT_ID="$CONTRACT_ID" \
           METRICS_PORT=3000 \
           POLLING_INTERVAL_MS=5000 \

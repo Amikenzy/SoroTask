@@ -27,6 +27,7 @@ const { ParallelLedgerParser } = require("./parallelParser");
 const { CacheInvalidationEngine } = require("./cacheInvalidator");
 const { LedgerGapDetector } = require("./ledgerGapDetector");
 const { HighAvailabilityManager } = require("./ha");
+const { SyntheticMonitor } = require("./syntheticMonitor");
 
 // Configuration
 const RPC_URL = "https://soroban-testnet.stellar.org"; // Change as needed
