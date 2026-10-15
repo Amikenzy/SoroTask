@@ -190,7 +190,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     async function restore() {
       setStatus("restoring");
-      const existing = await restoreWalletSession() ?? await restoreSession();
+      const existing =
+        (typeof restoreWalletSession === "function" ? await restoreWalletSession() : null) ??
+        (typeof restoreSession === "function" ? await restoreSession() : null);
       if (cancelled) return;
 
       if (existing) {
@@ -234,7 +236,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setErrorMessage(null);
 
     try {
-      const newSession = await connectWalletWith(walletId);
+      const newSession = typeof connectWalletWith === "function"
+        ? await connectWalletWith(walletId)
+        : await connectWallet();
       startWatcher(newSession);
     } catch (err) {
       setError(err);
@@ -248,7 +252,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setErrorCode(null);
     setErrorMessage(null);
     setStatus("disconnected");
-    disconnectWallet();
+    if (typeof disconnectWallet === "function") {
+      disconnectWallet();
+    } else if (typeof window !== "undefined") {
+      localStorage.setItem("sorotask_wallet_disconnected", "true");
+    }
   }, []);
 
   const clearError = useCallback(() => {

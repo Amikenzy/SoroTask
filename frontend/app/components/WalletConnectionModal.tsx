@@ -143,6 +143,15 @@ export function WalletConnectionModal({ open, onClose }: WalletConnectionModalPr
   const isConnecting = status === "connecting";
   const isConnected = status === "connected" && session !== null;
   const isError = status === "error";
+
+  useEffect(() => {
+    if (open && isConnected) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [open, isConnected, onClose]);
   const showNotInstalled =
     freighterInstalled === false || (isError && errorCode === "NOT_INSTALLED");
 
@@ -186,7 +195,7 @@ export function WalletConnectionModal({ open, onClose }: WalletConnectionModalPr
       size="sm"
       isLoading={isConnecting}
     >
-      <div className="space-y-5" data-testid="wallet-connection-modal">
+      <div className="space-y-5" data-testid="wallet-modal">
         {/* Connecting */}
         {isConnecting && (
           <div
