@@ -16,7 +16,6 @@ const { GasMonitor } = require("./src/gasMonitor");
 const HistoryManager = require("./src/history");
 const { StreamHub } = require("./src/streamHub");
 const { ApiGateway } = require("./src/apiGateway");
-const { FailurePredictor, KeeperReputationScorer } = require("./src/insights");
 const { DeadLetterQueue } = require("./src/deadLetter");
 const { FailurePredictor, KeeperReputationScorer, ProfitabilityEstimator } = require("./src/insights");
 const { GasForecaster } = require("./src/gasForecaster");
@@ -98,6 +97,7 @@ async function main() {
   // tasks that aren't yet ready for their backoff retry).
   const deadLetterQueue = new DeadLetterQueue({
     logger: createLogger("dead-letter-queue"),
+  });
   // Issue #781 — profitability gate. gasForecaster accumulates per-task fee
   // history (fed by executeTask below) so profitabilityEstimator can compare
   // a task's bounty against its forecasted cost before spending a real fee
@@ -903,11 +903,15 @@ async function main() {
 
       // Poll for due tasks
       // Pass registry so cached gas/timing filters can read previously fetched values
-      const dueTaskIds = await poller.pollDueTasks(shardSelection.ownedTaskIds, {
-        registry,
-        idempotencyGuard,
-        includeContext: true,
-      });
+      const dueTaskIds = await withSpan(
+        'poll_cycle',
+        () => poller.pollDueTasks(shardSelection.ownedTaskIds, {
+          registry,
+          idempotencyGuard,
+          includeContext: true,
+        }),
+        { ownedTaskCount: shardSelection.ownedTaskIds.length },
+      );
       dueCountThisCycle = dueTaskIds.length;
 
       // Issue #783: skip tasks the dead-letter queue has quarantined
@@ -930,15 +934,6 @@ async function main() {
           taskIds: quarantinedSkipped,
         });
       }
-      const dueTaskIds = await withSpan(
-        'poll_cycle',
-        () => poller.pollDueTasks(shardSelection.ownedTaskIds, {
-          registry,
-          idempotencyGuard,
-          includeContext: true,
-        }),
-        { ownedTaskCount: shardSelection.ownedTaskIds.length },
-      );
 
       if (executableTaskIds.length > 0) {
         const lockSnapshot = idempotencyGuard.getSnapshot();
