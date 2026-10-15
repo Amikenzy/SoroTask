@@ -56,7 +56,7 @@ for attempt in {1..5}; do
     --wasm "$WASM_PATH" \
     --source deployer \
     --network local \
-    --fee 10000000 2>&1 || true)
+    --inclusion-fee 10000000 2>&1 || true)
   echo "$DEPLOY_OUTPUT"
   CONTRACT_ID=$(printf '%s\n' "$DEPLOY_OUTPUT" | grep -o 'C[0-9A-Z]\{55\}' | tail -1 || true)
   if [ -n "$CONTRACT_ID" ]; then
@@ -69,12 +69,8 @@ done
 
 if [ -z "$CONTRACT_ID" ]; then
   echo "::error::Failed to deploy SoroTask contract after multiple attempts"
-  echo "=== docker exec supervisorctl status ==="
-  docker exec soroban-rpc supervisorctl status || true
-  echo "=== docker exec stellar-core logs ==="
-  docker exec soroban-rpc supervisorctl tail -200 stellar-core || true
-  echo "=== docker exec stellar-rpc logs ==="
-  docker exec soroban-rpc supervisorctl tail -200 stellar-rpc || true
+  echo "=== docker logs soroban-rpc (tail 200) ==="
+  docker logs soroban-rpc --tail 200 || true
   exit 1
 fi
 echo "CONTRACT_ID: $CONTRACT_ID"
@@ -87,7 +83,7 @@ for attempt in {1..3}; do
     --wasm "$WASM_PATH" \
     --source deployer \
     --network local \
-    --fee 10000000 2>&1 || true)
+    --inclusion-fee 10000000 2>&1 || true)
   TARGET_ID=$(printf '%s\n' "$DEPLOY_OUTPUT" | grep -o 'C[0-9A-Z]\{55\}' | tail -1 || true)
   if [ -n "$TARGET_ID" ]; then
     break
