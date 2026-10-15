@@ -13,11 +13,16 @@ const { Pool } = require('pg');
 const { DbRouter, wrapPgPool, normalizePgQuery, parseReplicaUrls } = require('../dbRouter');
 
 // Configuration
-const DATABASE_WRITE_URL =
+const rawDbUrl =
   process.env.DATABASE_WRITE_URL ||
   process.env.DATABASE_URL ||
   process.env.POSTGRES_URL ||
-  'postgresql://postgres:postgres@localhost:5432/sorotask_indexer';
+  '';
+
+const isPostgresUrl = rawDbUrl.startsWith('postgres://') || rawDbUrl.startsWith('postgresql://');
+const DATABASE_WRITE_URL = isPostgresUrl
+  ? rawDbUrl
+  : 'postgresql://postgres:postgres@localhost:5432/sorotask_indexer';
 
 const WRITE_POOL_MAX = parseInt(process.env.DATABASE_WRITE_POOL_MAX || '20', 10);
 const READ_POOL_MAX = parseInt(process.env.DATABASE_READ_POOL_MAX || '50', 10);
@@ -246,6 +251,9 @@ let writePoolInstance = null;
 let readPoolInstances = [];
 
 function createWritePool() {
+  if (process.env.DATABASE_URL && !isPostgresUrl) {
+    return fallbackDb;
+  }
   try {
     const pool = new Pool({
       connectionString: DATABASE_WRITE_URL,

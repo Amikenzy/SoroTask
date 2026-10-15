@@ -368,7 +368,7 @@ async function initializeKeeperAccount(opts = {}) {
     logger.info('Keeper initialized from HSM', { publicKey, provider: process.env.KEY_PROVIDER_TYPE || process.env.KEY_PROVIDER || process.env.HSM_PROVIDER });
 
     const rpcUrl = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
-    const server = new Server(rpcUrl);
+    const server = new Server(rpcUrl, { allowHttp: rpcUrl.startsWith('http://') });
     const accountResponse = await server.getAccount(publicKey);
     return { keypair, accountResponse, hsmSigner };
   }
@@ -383,7 +383,7 @@ async function initializeKeeperAccount(opts = {}) {
   logger.info('Keeper initialized from local secret', { publicKey });
 
   const rpcUrl = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
-  const server = new Server(rpcUrl);
+  const server = new Server(rpcUrl, { allowHttp: rpcUrl.startsWith('http://') });
   const accountResponse = await server.getAccount(publicKey);
   return { keypair, accountResponse };
 }

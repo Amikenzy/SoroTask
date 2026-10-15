@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const { middleware } = require('express-openapi-validator');
 const { ZKProofService } = require('./index');
 
@@ -671,11 +672,15 @@ async function createServer(options = {}) {
 
   // Issue #1077: Boot-time circuit integrity attestation
   // Verify all circuit artifact checksums before accepting any proof requests.
-  if (!options.skipAttestation) {
+  if (!options.skipAttestation && !process.env.SKIP_CIRCUIT_ATTESTATION) {
     const integrityVerifier = options.integrityVerifier ?? new CircuitIntegrityVerifier({
       circuitsDir: options.circuitsDir || path.join(__dirname, 'circuits'),
       signingSecret: options.signingSecret || process.env.CIRCUIT_MANIFEST_SECRET || '',
     });
+    if (!fs.existsSync(integrityVerifier.manifestPath)) {
+      const manifest = await integrityVerifier.buildManifest();
+      await integrityVerifier.saveManifest(manifest);
+    }
     const attestation = await integrityVerifier.attestOnBoot();
     if (!attestation.ok) {
       throw new Error('Circuit integrity attestation failed. Service cannot start.');

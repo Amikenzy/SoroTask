@@ -184,12 +184,12 @@ function wrapPgPool(pool, name = 'postgres-pool', fallbackDb = null) {
 }
 
 function isConnectionRefused(err) {
-  return (
-    err &&
-    (err.code === 'ECONNREFUSED' ||
-      err.message?.includes('ECONNREFUSED') ||
-      (Array.isArray(err.errors) && err.errors.some((e) => e.code === 'ECONNREFUSED')))
-  );
+  if (!err) return false;
+  const codes = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT'];
+  if (codes.includes(err.code)) return true;
+  if (err.message && codes.some((code) => err.message.includes(code))) return true;
+  if (Array.isArray(err.errors) && err.errors.some((e) => codes.includes(e?.code))) return true;
+  return false;
 }
 
 /**

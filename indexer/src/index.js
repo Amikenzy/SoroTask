@@ -28,16 +28,17 @@ const { CacheInvalidationEngine } = require("./cacheInvalidator");
 const { LedgerGapDetector } = require("./ledgerGapDetector");
 const { HighAvailabilityManager } = require("./ha");
 const { SyntheticMonitor } = require("./syntheticMonitor");
+const { updateLedgerMetrics, recordEventIndexed } = require("./metrics");
 
 // Configuration
-const RPC_URL = "https://soroban-testnet.stellar.org"; // Change as needed
+const RPC_URL = process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org"; // Change as needed
 const CONTRACT_ID = process.env.CONTRACT_ID || "CCKANVNJJIKGYU4TYTZBGL5JQVLPW33KQUW6JFHPLKXDLQEZETHOUAMJ"; // Replace with actual contract ID
 const POLL_INTERVAL_MS = 6000; // 6 seconds
 const RECONCILE_INTERVAL_MS = 300000; // 5 minutes
 const STALE_CLEANUP_INTERVAL_MS = 86400000; // 24 hours
 
 // Initialize RPC server
-const rpc = new SorobanRpc.Server(RPC_URL);
+const rpc = new SorobanRpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith("http://") });
 const contract = new Contract(CONTRACT_ID);
 
 // Database connection is handled by the PostgreSQL pool in ./graphql/db.js (Issue #1064)
