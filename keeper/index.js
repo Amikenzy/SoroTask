@@ -31,6 +31,12 @@ const { createDefaultFilterChain } = require("./src/taskFilter");
 const { getRedisClient } = require("./src/lock");
 const { computeAdaptivePollingInterval } = require("./src/adaptiveScheduler");
 const { withSpan } = require("./src/otel");
+const { FraudDetectionService } = require("./src/fraudDetection");
+const { TaskMetadataCache } = require("./src/taskMetadataCache");
+const { KeeperAlertManager } = require("./src/keeperAlerts");
+const { WebhookAuthProtocol, InMemoryReplayStore } = require("./src/webhookAuth");
+const { WebhookTriggerHandler } = require("./src/webhookTrigger");
+const { KeeperP2PNetwork } = require("./src/p2pNetwork");
 
 // Create root logger for the main module
 const logger = createLogger("keeper");
@@ -58,6 +64,11 @@ async function main() {
     logger.error("Configuration error", { error: err.message });
     process.exit(1);
   }
+
+  const server = new Server(config.rpcUrl, {
+    allowHttp: Boolean(config.rpcUrl && config.rpcUrl.startsWith("http://")),
+  });
+  const alertManager = new KeeperAlertManager();
 
   let keeperData;
   try {
@@ -733,12 +744,6 @@ async function main() {
     alertManager.stopRpcMonitor();
   });
 
-  // Register SLA monitor cleanup
-  shutdownManager.registerResource("sla-monitor", async () => {
-    logger.info("Stopping SLA monitor");
-    await slaMonitor.stop();
-  });
-
   // Register registry cleanup
   shutdownManager.registerResource("task-registry", async () => {
     logger.info("Closing task registry");
@@ -756,11 +761,6 @@ async function main() {
   shutdownManager.registerResource("rpc-server", async () => {
     logger.info("Closing RPC server connection");
     // Server doesn't have explicit close, but we log it
-  });
-
-  shutdownManager.registerResource("rpc-failover", async () => {
-    logger.info("Stopping RPC failover manager");
-    failoverClient.stop();
   });
 
   // Register idempotency guard persistence
