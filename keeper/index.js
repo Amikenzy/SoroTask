@@ -970,6 +970,11 @@ async function main() {
         logger.info("No tasks due for execution");
       }
 
+      metricsServer.updateHealth({
+        lastPollAt: new Date(),
+        rpcConnected: true,
+      });
+
       } catch (error) {
         cycleErrored = true;
         logger.error("Error in polling cycle", { error: error.message });

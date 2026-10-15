@@ -321,6 +321,23 @@ class TaskRegistry extends EventEmitter {
 
       await this._saveToDisk();
     } catch (err) {
+      const match = err.message && err.message.match(/ledger range:\s*(\d+)/i);
+      if (match) {
+        const minLedger = parseInt(match[1], 10);
+        if (minLedger > 0 && (!this.lastSeenLedger || this.lastSeenLedger < minLedger)) {
+          this.logger.warn('startLedger behind retained range, fast-forwarding', {
+            previous: this.lastSeenLedger,
+            fastForwardTo: minLedger,
+          });
+          this.lastSeenLedger = minLedger;
+          try {
+            return await this._fetchEvents();
+          } catch (retryErr) {
+            this.logger.error('Error fetching events after fast-forward', { error: retryErr.message });
+            return;
+          }
+        }
+      }
       this.logger.error('Error fetching events', { error: err.message });
     }
   }

@@ -34,7 +34,7 @@
 
 const { trace, context, SpanStatusCode } = require('@opentelemetry/api');
 const { NodeTracerProvider, SimpleSpanProcessor, ConsoleSpanExporter } = require('@opentelemetry/sdk-trace-node');
-const { Resource } = require('@opentelemetry/resources');
+const resources = require('@opentelemetry/resources');
 const { SemanticResourceAttributes } = require('@opentelemetry/semantic-conventions');
 
 const SERVICE_NAME = 'sorotask-keeper';
@@ -60,8 +60,16 @@ let tracer = null;
 function getTracer() {
   if (tracer) return tracer;
 
+  const serviceAttr = SemanticResourceAttributes?.SERVICE_NAME || 'service.name';
+  let resource;
+  if (typeof resources.resourceFromAttributes === 'function') {
+    resource = resources.resourceFromAttributes({ [serviceAttr]: SERVICE_NAME });
+  } else if (typeof resources.Resource === 'function') {
+    resource = new resources.Resource({ [serviceAttr]: SERVICE_NAME });
+  }
+
   provider = new NodeTracerProvider({
-    resource: new Resource({ [SemanticResourceAttributes.SERVICE_NAME]: SERVICE_NAME }),
+    ...(resource && { resource }),
   });
   const processor = buildSpanProcessor();
   if (processor) provider.addSpanProcessor(processor);
