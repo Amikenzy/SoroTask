@@ -147,7 +147,7 @@ async function checkPipelineState() {
     }
     try {
       const payload = JSON.parse(res.body);
-      if (payload && typeof payload === 'object' && payload.status && payload.status !== 'ok') {
+      if (payload && typeof payload === 'object' && payload.status && payload.status !== 'ok' && payload.status !== 'healthy') {
         problems.push(`${name} health status: ${payload.status}`);
       }
     } catch {
