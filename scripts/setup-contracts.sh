@@ -52,9 +52,17 @@ echo "Using contract WASM at: $WASM_PATH"
 CONTRACT_ID=""
 for attempt in {1..5}; do
   echo "Attempt $attempt deploying SoroTask contract..."
+  source_alias="deployer"
+  if [ "$attempt" -gt 1 ]; then
+    source_alias="deployer_$attempt"
+    stellar keys generate --network local "$source_alias" || true
+    addr="$(stellar keys address "$source_alias" 2>/dev/null || stellar keys public-key "$source_alias")"
+    curl -fsS "http://localhost:8000/friendbot?addr=$addr" > /dev/null || true
+    sleep 2
+  fi
   DEPLOY_OUTPUT=$(stellar contract deploy \
     --wasm "$WASM_PATH" \
-    --source deployer \
+    --source "$source_alias" \
     --network local \
     --inclusion-fee 10000000 2>&1 || true)
   echo "$DEPLOY_OUTPUT"

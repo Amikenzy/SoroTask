@@ -193,6 +193,11 @@ async function main() {
     process.exit(1);
   }
 
+  metricsServer.updateHealth({
+    rpcConnected: true,
+    lastPollAt: new Date(),
+  });
+
    const idempotencyGuard = new ExecutionIdempotencyGuard({
      logger: createLogger("idempotency"),
    });
@@ -601,7 +606,7 @@ async function main() {
 
   // Initialize event-driven task registry
   const registry = new TaskRegistry(server, config.contractId, {
-    startLedger: parseInt(process.env.START_LEDGER || "0", 10),
+    startLedger: parseInt(process.env.START_LEDGER || "1", 10) || 1,
     logger: createLogger("registry"),
     resolverCacheEnabled: config.resolverCacheEnabled,
     resolverCacheTtlSeconds: config.resolverCacheTtlSeconds,

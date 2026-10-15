@@ -266,7 +266,7 @@ class TaskRegistry extends EventEmitter {
 
       if (!this.lastSeenLedger) {
         // Look back ~1 hour on testnet (≈ 720 ledgers)
-        this.lastSeenLedger = Math.max(currentLedger - 720, 0);
+        this.lastSeenLedger = Math.max(currentLedger - 720, 1);
       }
 
       const topicsList = Object.values(EVENT_TOPICS);
@@ -284,7 +284,7 @@ class TaskRegistry extends EventEmitter {
         }
 
         const params = {
-          startLedger: cursor ? undefined : this.lastSeenLedger,
+          startLedger: cursor ? undefined : Math.max(this.lastSeenLedger || 1, 1),
           filters,
           limit: 100,
         };

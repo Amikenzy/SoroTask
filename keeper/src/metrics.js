@@ -350,6 +350,15 @@ class Metrics {
       totalEndpoints: 1,
       endpoints: [],
     };
+    this.fraudState = {
+      lastRiskScore: 0,
+      pendingAlerts: 0,
+      recentObservations: 0,
+    };
+    this.reconciliationState = {
+      lastDrift: 0,
+      pendingExecutions: 0,
+    };
     this.reset();
   }
 
@@ -543,6 +552,14 @@ class Metrics {
     };
   }
 
+  updateFraudState(state = {}) {
+    this.fraudState = { ...this.fraudState, ...state };
+  }
+
+  updateReconciliationState(state = {}) {
+    this.reconciliationState = { ...this.reconciliationState, ...state };
+  }
+
   snapshot() {
     return {
       ...this.counters,
@@ -553,6 +570,8 @@ class Metrics {
       dbShard: { ...this.dbShardState },
       drift: { ...this.driftState },
       failover: { ...this.failoverState },
+      fraud: { ...this.fraudState },
+      reconciliation: { ...this.reconciliationState },
     };
   }
 
@@ -608,10 +627,11 @@ class Metrics {
     let status = 'healthy';
     let statusDescription = 'Keeper is operating normally.';
 
-    if (!this.lastPollAt || rpcCircuitState === 'OPEN') {
+    const isInitialBoot = uptimeSeconds < 30;
+    if ((!this.lastPollAt && !isInitialBoot) || rpcCircuitState === 'OPEN') {
       status = 'unhealthy';
       statusDescription = 'Keeper is unavailable due to stale polling or broken RPC circuits.';
-    } else if (isStale) {
+    } else if (isStale && !isInitialBoot) {
       status = 'stale';
       statusDescription = 'Keeper polling is stale and may delay task execution. Check RPC and scheduler health.';
     } else if (backlogSize > 500 || retryBudgetPressure >= 0.95) {
@@ -1462,8 +1482,11 @@ class MetricsServer {
       if (url.pathname === '/healthz' || url.pathname === '/healthz/') {
         this.handleLiveness(res);
 
-      } else if (url.pathname === '/readyz' || url.pathname === '/readyz/' || url.pathname === '/health' || url.pathname === '/health/') {
+      } else if (url.pathname === '/readyz' || url.pathname === '/readyz/') {
         await this.handleReadiness(res);
+
+      } else if (url.pathname === '/health' || url.pathname === '/health/') {
+        this.handleHealth(res);
 
       } else if (req.url === '/metrics' || req.url === '/metrics/') {
         this.handleMetrics(res);
@@ -1706,7 +1729,7 @@ class MetricsServer {
     const healthy = Object.values(checks).every((check) => check.healthy);
     res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      status: healthy ? 'ready' : 'degraded',
+      status: healthy ? 'ok' : 'degraded',
       checks,
     }, null, 2));
   }
@@ -2220,15 +2243,27 @@ class MetricsServer {
   }
 
   updateFraudState(state) {
-    this.metrics.updateFraudState(state);
-    this.promFraudRiskScore.set(this.metrics.fraudState.lastRiskScore || 0);
-    this.promFraudPendingAlerts.set(this.metrics.fraudState.pendingAlerts || 0);
+    if (this.metrics && typeof this.metrics.updateFraudState === 'function') {
+      this.metrics.updateFraudState(state);
+    }
+    if (this.promFraudRiskScore) {
+      this.promFraudRiskScore.set(this.metrics?.fraudState?.lastRiskScore || state?.lastRiskScore || 0);
+    }
+    if (this.promFraudPendingAlerts) {
+      this.promFraudPendingAlerts.set(this.metrics?.fraudState?.pendingAlerts || state?.pendingAlerts || 0);
+    }
   }
 
   updateReconciliationState(state) {
-    this.metrics.updateReconciliationState(state);
-    this.promReconciliationDrift.set(this.metrics.reconciliationState.lastDrift || 0);
-    this.promReconciliationPending.set(this.metrics.reconciliationState.pendingExecutions || 0);
+    if (this.metrics && typeof this.metrics.updateReconciliationState === 'function') {
+      this.metrics.updateReconciliationState(state);
+    }
+    if (this.promReconciliationDrift) {
+      this.promReconciliationDrift.set(this.metrics?.reconciliationState?.lastDrift || state?.lastDrift || 0);
+    }
+    if (this.promReconciliationPending) {
+      this.promReconciliationPending.set(this.metrics?.reconciliationState?.pendingExecutions || state?.pendingExecutions || 0);
+    }
   }
 
   updateAdminState(state) {
