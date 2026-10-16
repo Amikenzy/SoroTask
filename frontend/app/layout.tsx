@@ -8,6 +8,8 @@ import { ErrorBoundary } from "@sentry/nextjs";
 import { ThemeProvider } from "next-themes";
 import { ThemeInitScript } from "./theme-init";
 import { THEME_STORAGE_KEY } from "@/src/lib/theme/themeEngine";
+import { PriceTicker } from "@/src/components/PriceTicker";
+import { TransactionToasts } from "@/src/components/TransactionToasts";
 import Link from "next/link";
 
 function GlobalErrorFallback({ error, resetError }: any) {
@@ -86,7 +88,9 @@ export default function RootLayout({
           >
             <AIAssistantProvider>
               <AppProviders>
+                <PriceTicker />
                 <CommandPalette />
+                <TransactionToasts />
                 {children}
               </AppProviders>
             </AIAssistantProvider>

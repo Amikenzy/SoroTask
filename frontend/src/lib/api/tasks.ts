@@ -28,21 +28,227 @@ export interface UpdateTaskInput {
   gas?: number;
 }
 
-const GRAPHQL_URL = process.env.NEXT_PUBLIC_INDEXER_URL || "http://localhost:4000/graphql";
+export class RateLimitError extends Error {
+  public retryAfterMs: number;
+  public attempt: number;
+  public endpoint: string;
+
+  constructor(
+    message: string,
+    retryAfterMs: number,
+    attempt = 1,
+    endpoint = "",
+  ) {
+    super(message);
+    this.name = "RateLimitError";
+    this.retryAfterMs = retryAfterMs;
+    this.attempt = attempt;
+    this.endpoint = endpoint;
+  }
+}
+
+export function parseRetryAfterHeader(
+  headerValue: string | null | undefined,
+): number | null {
+  if (!headerValue) return null;
+  const trimmed = headerValue.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return parseInt(trimmed, 10) * 1000;
+  }
+  const parsedDate = Date.parse(trimmed);
+  if (!isNaN(parsedDate)) {
+    const diff = parsedDate - Date.now();
+    return diff > 0 ? diff : 0;
+  }
+  return null;
+}
+
+export function calculateExponentialBackoff(
+  attempt: number,
+  baseMs = 1000,
+  maxMs = 30000,
+  jitter = false,
+): number {
+  const exp = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, attempt - 1)));
+  if (jitter) {
+    const jitterAmount = Math.floor(Math.random() * (baseMs * 0.5));
+    return Math.min(maxMs, exp + jitterAmount);
+  }
+  return exp;
+}
+
+export interface RateLimitEvent {
+  id: string;
+  endpoint: string;
+  attempt: number;
+  maxRetries: number;
+  retryAfterMs: number;
+  startTime: number;
+  actionLabel?: string;
+  status: "waiting" | "retrying" | "success" | "failed" | "cancelled";
+}
+
+type RateLimitListener = (event: RateLimitEvent | null) => void;
+const rateLimitListeners = new Set<RateLimitListener>();
+let currentRateLimitEvent: RateLimitEvent | null = null;
+
+export function emitRateLimit(event: RateLimitEvent | null): void {
+  currentRateLimitEvent = event;
+  rateLimitListeners.forEach((listener) => listener(event));
+}
+
+export function subscribeRateLimit(listener: RateLimitListener): () => void {
+  rateLimitListeners.add(listener);
+  listener(currentRateLimitEvent);
+  return () => {
+    rateLimitListeners.delete(listener);
+  };
+}
+
+export function cancelCurrentRateLimit(): void {
+  if (currentRateLimitEvent) {
+    emitRateLimit({ ...currentRateLimitEvent, status: "cancelled" });
+  }
+}
+
+export function getCurrentRateLimit(): RateLimitEvent | null {
+  return currentRateLimitEvent;
+}
+
+export function isRateLimitActive(): boolean {
+  return (
+    currentRateLimitEvent !== null && currentRateLimitEvent.status === "waiting"
+  );
+}
+
+export async function executeWithRateLimitRetry<T>(
+  action: () => Promise<T>,
+  options: {
+    maxRetries?: number;
+    baseBackoffMs?: number;
+    actionLabel?: string;
+    endpoint?: string;
+  } = {},
+): Promise<T> {
+  const maxRetries = options.maxRetries ?? 3;
+  const baseBackoffMs = options.baseBackoffMs ?? 1000;
+  const actionLabel = options.actionLabel || "API Action";
+  const endpoint = options.endpoint || GRAPHQL_URL;
+
+  let attempt = 1;
+  while (attempt <= maxRetries) {
+    try {
+      const result = await action();
+      if (
+        currentRateLimitEvent &&
+        currentRateLimitEvent.endpoint === endpoint
+      ) {
+        emitRateLimit({
+          ...currentRateLimitEvent,
+          status: "success",
+        });
+        setTimeout(() => emitRateLimit(null), 1000);
+      }
+      return result;
+    } catch (err: any) {
+      const isRateLimit =
+        err?.status === 429 ||
+        err instanceof RateLimitError ||
+        /429|rate limit|too many requests|throttled/i.test(err?.message || "");
+
+      if (!isRateLimit || attempt >= maxRetries) {
+        if (currentRateLimitEvent) {
+          emitRateLimit({
+            ...currentRateLimitEvent,
+            status: "failed",
+          });
+        }
+        throw err;
+      }
+
+      const backoffMs =
+        err?.retryAfterMs ??
+        (err?.response?.headers
+          ? parseRetryAfterHeader(err.response.headers.get("Retry-After"))
+          : null) ??
+        calculateExponentialBackoff(attempt, baseBackoffMs);
+
+      const event: RateLimitEvent = {
+        id: `rl-${Date.now()}-${attempt}`,
+        endpoint,
+        attempt,
+        maxRetries,
+        retryAfterMs: backoffMs,
+        startTime: Date.now(),
+        actionLabel,
+        status: "waiting",
+      };
+
+      emitRateLimit(event);
+
+      await new Promise<void>((resolve, reject) => {
+        let isSettled = false;
+        const timer = setTimeout(() => {
+          if (!isSettled) {
+            isSettled = true;
+            emitRateLimit({ ...event, status: "retrying" });
+            resolve();
+          }
+        }, backoffMs);
+
+        const unsub = subscribeRateLimit((ev) => {
+          if (ev?.status === "cancelled" && !isSettled) {
+            isSettled = true;
+            clearTimeout(timer);
+            unsub();
+            reject(new Error("Operation cancelled during rate limit backoff"));
+          }
+        });
+      });
+
+      attempt++;
+    }
+  }
+
+  throw new Error(`Max retries (${maxRetries}) exceeded`);
+}
+
+const GRAPHQL_URL =
+  process.env.NEXT_PUBLIC_INDEXER_URL || "http://localhost:4000/graphql";
 
 async function fetchGraphQL(query: string, variables: any = {}) {
   const response = await fetch(GRAPHQL_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // Add authentication headers here if needed based on GRAPHQL.md
     },
     body: JSON.stringify({ query, variables }),
   });
 
+  if (response.status === 429) {
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const delayMs =
+      parseRetryAfterHeader(retryAfterHeader) || calculateExponentialBackoff(1);
+    throw new RateLimitError(
+      "HTTP 429: Too Many Requests",
+      delayMs,
+      1,
+      GRAPHQL_URL,
+    );
+  }
+
   const result = await response.json();
   if (result.errors) {
-    throw new Error(result.errors[0].message);
+    const msg = result.errors[0]?.message || "GraphQL error";
+    if (/429|rate limit|too many requests|throttled/i.test(msg)) {
+      throw new RateLimitError(
+        msg,
+        calculateExponentialBackoff(1),
+        1,
+        GRAPHQL_URL,
+      );
+    }
+    throw new Error(msg);
   }
   return result.data;
 }
@@ -113,7 +319,7 @@ export async function listTasks(filters: TaskFilters = {}): Promise<Task[]> {
       }
     }
   `;
-  
+
   try {
     const data = await fetchGraphQL(query);
     let result = (data.tasks || []).map(mapTask);
@@ -129,7 +335,7 @@ export async function listTasks(filters: TaskFilters = {}): Promise<Task[]> {
           t.contract.toLowerCase().includes(q),
       );
     }
-    
+
     return result.sort((a: Task, b: Task) => a.id.localeCompare(b.id));
   } catch (err) {
     console.error("Failed to list tasks from indexer, returning empty.", err);
@@ -151,7 +357,7 @@ export async function getTask(id: string): Promise<Task> {
       }
     }
   `;
-  
+
   const data = await fetchGraphQL(query, { id });
   if (!data.task) {
     throw new Error(`Task ${id} not found`);
@@ -179,7 +385,7 @@ export interface GasMutationInput {
 
 export async function depositGas(input: GasMutationInput): Promise<Task> {
   const stroops = validateStroopAmount(input.amount);
-  
+
   const existingTask = await getTask(input.taskId).catch(() => ({
     id: input.taskId,
     contract: input.contractId || "CUNKNOWN",
@@ -191,7 +397,11 @@ export async function depositGas(input: GasMutationInput): Promise<Task> {
   }));
 
   const currentStroops = parseUnits(existingTask.gas.toString(), 7);
-  const simulation = simulateMinimumBalanceCheck(currentStroops, stroops, false);
+  const simulation = simulateMinimumBalanceCheck(
+    currentStroops,
+    stroops,
+    false,
+  );
   if (!simulation.valid) {
     throw new Error(simulation.error || "Deposit simulation failed");
   }
@@ -214,7 +424,10 @@ export async function depositGas(input: GasMutationInput): Promise<Task> {
       });
     }
   } catch (err) {
-    console.warn("deposit_gas contract call fallback to optimistic balance update:", err);
+    console.warn(
+      "deposit_gas contract call fallback to optimistic balance update:",
+      err,
+    );
   }
 
   const updatedGas = parseFloat(formatUnits(simulation.newBalanceStroops, 7));
@@ -262,7 +475,10 @@ export async function withdrawGas(input: GasMutationInput): Promise<Task> {
       });
     }
   } catch (err) {
-    console.warn("withdraw_gas contract call fallback to optimistic balance update:", err);
+    console.warn(
+      "withdraw_gas contract call fallback to optimistic balance update:",
+      err,
+    );
   }
 
   const updatedGas = parseFloat(formatUnits(simulation.newBalanceStroops, 7));
@@ -273,7 +489,9 @@ export async function withdrawGas(input: GasMutationInput): Promise<Task> {
   };
 }
 
-export async function registerTask(input: RegisterTaskInput & { userAddress?: string; contractId?: string }): Promise<Task> {
+export async function registerTask(
+  input: RegisterTaskInput & { userAddress?: string; contractId?: string },
+): Promise<Task> {
   let verifiedTaskId = "";
 
   try {
@@ -310,7 +528,9 @@ export async function registerTask(input: RegisterTaskInput & { userAddress?: st
   };
 }
 
-export async function updateTask(input: UpdateTaskInput & { userAddress?: string; contractId?: string }): Promise<Task> {
+export async function updateTask(
+  input: UpdateTaskInput & { userAddress?: string; contractId?: string },
+): Promise<Task> {
   try {
     const { SorobanService } = await import("../../../app/lib/soroban.service");
     const soroban = new SorobanService();
@@ -344,10 +564,15 @@ export async function updateTask(input: UpdateTaskInput & { userAddress?: string
 
 // Task lifecycle operations
 
-export async function pauseTask(id: string, userAddress?: string, contractId?: string): Promise<{ id: string; status: TaskStatus }> {
+export async function pauseTask(
+  id: string,
+  userAddress?: string,
+  contractId?: string,
+): Promise<{ id: string; status: TaskStatus }> {
   try {
     if (userAddress && contractId) {
-      const { SorobanService } = await import("../../../app/lib/soroban.service");
+      const { SorobanService } =
+        await import("../../../app/lib/soroban.service");
       const soroban = new SorobanService();
       const { nativeToScVal } = await import("@stellar/stellar-sdk");
       const taskIdU64 = BigInt(id.replace(/\D/g, "") || "0");
@@ -365,10 +590,15 @@ export async function pauseTask(id: string, userAddress?: string, contractId?: s
   return { id, status: "pending" };
 }
 
-export async function resumeTask(id: string, userAddress?: string, contractId?: string): Promise<{ id: string; status: TaskStatus }> {
+export async function resumeTask(
+  id: string,
+  userAddress?: string,
+  contractId?: string,
+): Promise<{ id: string; status: TaskStatus }> {
   try {
     if (userAddress && contractId) {
-      const { SorobanService } = await import("../../../app/lib/soroban.service");
+      const { SorobanService } =
+        await import("../../../app/lib/soroban.service");
       const soroban = new SorobanService();
       const { nativeToScVal } = await import("@stellar/stellar-sdk");
       const taskIdU64 = BigInt(id.replace(/\D/g, "") || "0");
@@ -386,10 +616,15 @@ export async function resumeTask(id: string, userAddress?: string, contractId?: 
   return { id, status: "running" };
 }
 
-export async function cancelTask(id: string, userAddress?: string, contractId?: string): Promise<{ id: string }> {
+export async function cancelTask(
+  id: string,
+  userAddress?: string,
+  contractId?: string,
+): Promise<{ id: string }> {
   try {
     if (userAddress && contractId) {
-      const { SorobanService } = await import("../../../app/lib/soroban.service");
+      const { SorobanService } =
+        await import("../../../app/lib/soroban.service");
       const soroban = new SorobanService();
       const { nativeToScVal } = await import("@stellar/stellar-sdk");
       const taskIdU64 = BigInt(id.replace(/\D/g, "") || "0");
@@ -514,7 +749,7 @@ export async function deleteTask(id: string): Promise<{ id: string }> {
       }
     }
   `;
-  
+
   try {
     await fetchGraphQL(mutation, { id });
   } catch (err) {
@@ -522,4 +757,3 @@ export async function deleteTask(id: string): Promise<{ id: string }> {
   }
   return { id };
 }
-
