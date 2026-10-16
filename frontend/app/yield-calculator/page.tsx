@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FiArrowLeft, FiTrendingUp, FiSettings } from "react-icons/fi";
-import YieldCalculator from "@/src/components/yield/YieldCalculator";
+import YieldCalculator from "@/src/components/YieldCalculator";
 import OptimalIntervalPanel from "@/src/components/yield/OptimalIntervalPanel";
 
 export default function YieldCalculatorPage() {
