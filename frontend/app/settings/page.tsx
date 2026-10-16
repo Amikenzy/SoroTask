@@ -7,6 +7,7 @@ import { useOnboarding } from "@/src/components/onboarding/OnboardingProvider";
 import { HardwareWalletPanel } from "@/src/components/wallet/HardwareWalletPanel";
 import { TxBatchRegistration } from "@/src/components/wallet/TxBatchRegistration";
 import { OptimizedMedia } from "@/src/components/optimized-media";
+import { ApiKeyManager } from "@/src/components/ApiKeyManager";
 import { AllowanceManager } from "@/src/components/AllowanceManager";
 
 interface ProviderConfig {
@@ -654,6 +655,8 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Developer API Keys */}
+        <ApiKeyManager />
         {/* Token Allowances & Approval Manager */}
         <div className="bg-neutral-800/40 border border-neutral-700/60 rounded-xl p-6 shadow-xl">
           <AllowanceManager />

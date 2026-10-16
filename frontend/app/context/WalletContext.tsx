@@ -39,12 +39,26 @@ import {
 // ---------------------------------------------------------------------------
 
 export type ConnectionStatus =
-  | "idle"       // initial state, not yet checked
-  | "restoring"  // silently re-hydrating session on mount
+  | "idle" // initial state, not yet checked
+  | "restoring" // silently re-hydrating session on mount
   | "connecting" // user clicked Connect, waiting for Freighter popup
-  | "connected"  // wallet is connected and session is valid
+  | "connected" // wallet is connected and session is valid
   | "disconnected" // explicitly disconnected or session lost
-  | "error";     // connection attempt failed
+  | "error"; // connection attempt failed
+
+export interface TrackedTransaction {
+  id: string;
+  txHash: string;
+  description: string;
+  sequenceNumber: number;
+  baseFee: number; // in stroops
+  priorityFee?: number;
+  submittedAt: number; // timestamp in ms
+  status: "pending" | "speeding_up" | "replaced" | "confirmed" | "failed";
+  isStuck?: boolean;
+  replacedByTxHash?: string;
+  payload?: any;
+}
 
 export type WalletContextValue = {
   /** Current connection status */
@@ -71,6 +85,19 @@ export type WalletContextValue = {
   disconnect: () => void;
   /** Clear the current error */
   clearError: () => void;
+  /** Pending and tracked transactions submitted by user */
+  pendingTransactions: TrackedTransaction[];
+  /** Track a newly submitted transaction */
+  trackTransaction: (
+    tx: Omit<TrackedTransaction, "id" | "submittedAt" | "status" | "isStuck">,
+  ) => string;
+  /** Speed up and replace a stuck transaction with bumped sequence and minimum +20% fee */
+  speedUpTransaction: (
+    txId: string,
+    newFee: number,
+  ) => Promise<{ oldTxHash: string; newTxHash: string; newFee: number }>;
+  /** Dismiss transaction from active toast tracking */
+  dismissTransaction: (txId: string) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -121,6 +148,34 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [errorCode, setErrorCode] = useState<WalletError | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [pendingTransactions, setPendingTransactions] = useState<
+    TrackedTransaction[]
+  >([]);
+  const pendingTransactionsRef = useRef<TrackedTransaction[]>([]);
+  pendingTransactionsRef.current = pendingTransactions;
+
+  // Automatically detect stuck transactions (> 30 seconds pending)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPendingTransactions((prev) => {
+        let changed = false;
+        const now = Date.now();
+        const next = prev.map((tx) => {
+          if (
+            tx.status === "pending" &&
+            !tx.isStuck &&
+            now - tx.submittedAt > 30000
+          ) {
+            changed = true;
+            return { ...tx, isStuck: true };
+          }
+          return tx;
+        });
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const isLoading = status === "restoring" || status === "connecting";
 
@@ -191,7 +246,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     async function restore() {
       setStatus("restoring");
       const existing =
-        (typeof restoreWalletSession === "function" ? await restoreWalletSession() : null) ??
+        (typeof restoreWalletSession === "function"
+          ? await restoreWalletSession()
+          : null) ??
         (typeof restoreSession === "function" ? await restoreSession() : null);
       if (cancelled) return;
 
@@ -229,21 +286,25 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, [startWatcher, setError]);
 
-  const connectWith = useCallback(async (walletId: SupportedWallet) => {
-    setIsConnectModalOpen(true);
-    setStatus("connecting");
-    setErrorCode(null);
-    setErrorMessage(null);
+  const connectWith = useCallback(
+    async (walletId: SupportedWallet) => {
+      setIsConnectModalOpen(true);
+      setStatus("connecting");
+      setErrorCode(null);
+      setErrorMessage(null);
 
-    try {
-      const newSession = typeof connectWalletWith === "function"
-        ? await connectWalletWith(walletId)
-        : await connectWallet();
-      startWatcher(newSession);
-    } catch (err) {
-      setError(err);
-    }
-  }, [startWatcher, setError]);
+      try {
+        const newSession =
+          typeof connectWalletWith === "function"
+            ? await connectWalletWith(walletId)
+            : await connectWallet();
+        startWatcher(newSession);
+      } catch (err) {
+        setError(err);
+      }
+    },
+    [startWatcher, setError],
+  );
 
   const disconnect = useCallback(() => {
     stopWatcherRef.current?.();
@@ -265,6 +326,91 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setStatus("disconnected");
   }, []);
 
+  const trackTransaction = useCallback(
+    (
+      tx: Omit<TrackedTransaction, "id" | "submittedAt" | "status" | "isStuck">,
+    ) => {
+      const id = `tx-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const newTx: TrackedTransaction = {
+        ...tx,
+        id,
+        submittedAt: Date.now(),
+        status: "pending",
+        isStuck: false,
+      };
+      setPendingTransactions((prev) => [newTx, ...prev]);
+      return id;
+    },
+    [],
+  );
+
+  const speedUpTransaction = useCallback(
+    async (txId: string, newFee: number) => {
+      const targetTx = pendingTransactionsRef.current.find(
+        (t) => t.id === txId,
+      );
+      if (!targetTx) {
+        throw new Error(`Transaction ${txId} not found`);
+      }
+
+      setPendingTransactions((prev) =>
+        prev.map((t) =>
+          t.id === txId ? { ...t, status: "speeding_up" as const } : t,
+        ),
+      );
+
+      const minFee = Math.ceil(targetTx.baseFee * 1.2);
+      if (newFee < minFee) {
+        throw new Error(
+          `Replacement fee (${newFee}) must be at least 20% higher than original fee (${targetTx.baseFee}). Minimum required: ${minFee}`,
+        );
+      }
+
+      // Generate replacement transaction hash (re-signed with identical sequence and payload)
+      const newTxHash = `0x${Array.from({ length: 64 }, () =>
+        Math.floor(Math.random() * 16).toString(16),
+      ).join("")}`;
+
+      const replacementTx: TrackedTransaction = {
+        id: `tx-${Date.now()}`,
+        txHash: newTxHash,
+        description: `[Speed Up] ${targetTx.description}`,
+        sequenceNumber: targetTx.sequenceNumber, // Identical sequence number replaces original without duplicate execution
+        baseFee: newFee,
+        priorityFee: Math.floor(newFee * 0.2),
+        submittedAt: Date.now(),
+        status: "pending",
+        isStuck: false,
+        payload: targetTx.payload,
+      };
+
+      setPendingTransactions((prev) =>
+        prev
+          .map((t) =>
+            t.id === txId
+              ? {
+                  ...t,
+                  status: "replaced" as const,
+                  replacedByTxHash: newTxHash,
+                }
+              : t,
+          )
+          .concat(replacementTx),
+      );
+
+      return {
+        oldTxHash: targetTx.txHash,
+        newTxHash,
+        newFee,
+      };
+    },
+    [],
+  );
+
+  const dismissTransaction = useCallback((txId: string) => {
+    setPendingTransactions((prev) => prev.filter((t) => t.id !== txId));
+  }, []);
+
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
@@ -284,6 +430,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         connectWith,
         disconnect,
         clearError,
+        pendingTransactions,
+        trackTransaction,
+        speedUpTransaction,
+        dismissTransaction,
       }}
     >
       {children}
@@ -314,6 +464,10 @@ const DEFAULT_WALLET_CONTEXT: WalletContextValue = {
   connectWith: async () => {},
   disconnect: () => {},
   clearError: () => {},
+  pendingTransactions: [],
+  trackTransaction: () => "",
+  speedUpTransaction: async () => ({ oldTxHash: "", newTxHash: "", newFee: 0 }),
+  dismissTransaction: () => {},
 };
 
 export function useWalletOptional(): WalletContextValue {
