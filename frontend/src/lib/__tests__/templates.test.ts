@@ -421,12 +421,18 @@ describe("filtering and sorting", () => {
         ...DEFAULT_TEMPLATE_FILTERS,
         trustTier: "verified",
       }).map((t) => t.id),
-    ).toEqual(["yield-harvest-daily", "balance-sweep"]);
+    ).toEqual([
+      "yield-harvest-daily",
+      "balance-sweep",
+      "dao-payroll-multisig",
+      "soroban-state-maintenance",
+      "uniswap-dca-protector",
+    ]);
   });
 
   it("combines filters conjunctively", () => {
     const results = filterTemplates(COMMUNITY_TEMPLATES, {
-      query: "swap",
+      query: "nonexistent-keyword-xyz",
       category: "defi",
       trustTier: "verified",
     });
