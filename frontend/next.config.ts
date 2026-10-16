@@ -25,10 +25,20 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  compress: true,
+  poweredByHeader: false,
   turbopack: {},
   experimental: {
     useTypeScriptCli: true,
     sri: { algorithm: "sha384" },
+    optimizePackageImports: [
+      "lucide-react",
+      "react-icons",
+      "recharts",
+      "@dnd-kit/core",
+      "@dnd-kit/sortable",
+      "date-fns",
+    ],
   },
   typescript: {
     ignoreBuildErrors: true,
@@ -84,7 +94,23 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/:path*",
-        headers: securityHeaders,
+        headers: [
+          ...securityHeaders,
+          {
+            key: "Link",
+            value:
+              "<https://soroban-testnet.stellar.org>; rel=preconnect; crossorigin, <https://rpc-mainnet.stellar.org>; rel=dns-prefetch",
+          },
+        ],
+      },
+      {
+        source: "/_next/static/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
       },
     ];
   },

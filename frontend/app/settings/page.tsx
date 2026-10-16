@@ -8,6 +8,7 @@ import { HardwareWalletPanel } from "@/src/components/wallet/HardwareWalletPanel
 import { TxBatchRegistration } from "@/src/components/wallet/TxBatchRegistration";
 import { OptimizedMedia } from "@/src/components/optimized-media";
 import { ApiKeyManager } from "@/src/components/ApiKeyManager";
+import { AllowanceManager } from "@/src/components/AllowanceManager";
 
 interface ProviderConfig {
   name: string;
@@ -656,6 +657,10 @@ export default function SettingsPage() {
 
         {/* Developer API Keys */}
         <ApiKeyManager />
+        {/* Token Allowances & Approval Manager */}
+        <div className="bg-neutral-800/40 border border-neutral-700/60 rounded-xl p-6 shadow-xl">
+          <AllowanceManager />
+        </div>
 
         {/* Danger Zone */}
         <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-6 shadow-xl">

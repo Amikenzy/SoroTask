@@ -15,6 +15,12 @@ import {
   createPerformanceMonitor,
   afterNextPaint,
 } from "@/src/lib/frontend-performance";
+import {
+  getSavedFilters,
+  saveCustomFilter,
+  deleteCustomFilter,
+  type SavedFilter,
+} from "@/src/lib/search/fuzzySearch";
 
 const TASKS_PER_PAGE = 10;
 const monitor = createPerformanceMonitor({ route: "/tasks" });
@@ -23,6 +29,11 @@ function TasksPageContent() {
   const [filters, setFilters] = useState<TaskFilters>({});
   const [currentPage, setCurrentPage] = useState(1);
   const [savedTemplates, setSavedTemplates] = useState<any[]>([]);
+  const [savedCustomFilters, setSavedCustomFilters] = useState<SavedFilter[]>(
+    [],
+  );
+  const [customViewName, setCustomViewName] = useState("");
+  const [showSaveView, setShowSaveView] = useState(false);
   const { data: tasks, isLoading } = useTasks(filters);
   const { listScrollPosition, saveListScrollPosition } = useLayoutStore();
   const listRef = useRef<HTMLDivElement>(null);
@@ -48,7 +59,7 @@ function TasksPageContent() {
       listRef.current.scrollTop = listScrollPosition;
     }
 
-    // Load saved templates
+    // Load saved templates and saved custom filters
     try {
       const stored = window.localStorage.getItem("sorotask.templates");
       if (stored) {
@@ -57,6 +68,7 @@ function TasksPageContent() {
     } catch (e) {
       console.error("Failed to parse templates from local storage", e);
     }
+    setSavedCustomFilters(getSavedFilters());
   }, [listScrollPosition]);
 
   // Save scroll position on scroll
@@ -119,7 +131,7 @@ function TasksPageContent() {
 
             <input
               type="text"
-              placeholder="Search tasks..."
+              placeholder="Search tasks, boolean queries (status:active AND gas:<10)..."
               value={filters.search || ""}
               onChange={(e) =>
                 updateFilters((prev) => ({
@@ -129,7 +141,107 @@ function TasksPageContent() {
               }
               className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 flex-1 max-w-md"
             />
+
+            {filters.search && (
+              <button
+                type="button"
+                onClick={() => setShowSaveView(true)}
+                className="text-xs text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap"
+              >
+                + Save View
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(
+                  new KeyboardEvent("keydown", {
+                    key: "k",
+                    metaKey: true,
+                    bubbles: true,
+                  }),
+                );
+              }}
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900/80 px-2.5 py-1.5 text-xs text-neutral-400 hover:text-neutral-200"
+            >
+              <span>Palette</span>
+              <kbd className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] font-mono text-neutral-300">
+                ⌘K
+              </kbd>
+            </button>
           </div>
+
+          {/* Save view prompt modal/bar */}
+          {showSaveView && (
+            <div className="mt-2.5 flex items-center gap-2 p-2 rounded-lg bg-neutral-900 border border-neutral-700 text-xs">
+              <span className="text-neutral-400">Save query as view:</span>
+              <input
+                type="text"
+                value={customViewName}
+                onChange={(e) => setCustomViewName(e.target.value)}
+                placeholder="View Name..."
+                className="rounded bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-200 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (customViewName.trim() && filters.search) {
+                    const saved = saveCustomFilter(
+                      customViewName.trim(),
+                      filters.search,
+                    );
+                    setSavedCustomFilters((prev) => [...prev, saved]);
+                    setCustomViewName("");
+                    setShowSaveView(false);
+                  }
+                }}
+                className="rounded bg-primary-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-primary-500"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSaveView(false)}
+                className="text-neutral-400 hover:text-neutral-200"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Saved Custom Views Pills */}
+          {savedCustomFilters.length > 0 && (
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-[11px] font-semibold uppercase text-neutral-500">
+                Custom Views:
+              </span>
+              {savedCustomFilters.map((view) => (
+                <span
+                  key={view.id}
+                  onClick={() =>
+                    updateFilters((prev) => ({ ...prev, search: view.query }))
+                  }
+                  className="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-900/80 px-2.5 py-0.5 text-[11px] text-sky-400 hover:bg-neutral-800 cursor-pointer"
+                >
+                  {view.name}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteCustomFilter(view.id);
+                      setSavedCustomFilters((prev) =>
+                        prev.filter((v) => v.id !== view.id),
+                      );
+                    }}
+                    className="ml-1 text-neutral-500 hover:text-red-400"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Batch multi-select (#1265) */}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-700/50 bg-neutral-900/40 px-3 py-2">
