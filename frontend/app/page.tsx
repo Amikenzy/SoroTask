@@ -2,6 +2,7 @@ import Link from "next/link";
 import { WalletNavSlot } from "@/app/components/WalletNavSlot";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ProductTour } from "@/src/components/ProductTour";
 import {
   FiActivity,
   FiArrowRight,
@@ -164,7 +165,7 @@ export default function HomePage() {
               Settings
             </Link>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3" data-tour="wallet-slot">
             <LanguageSelector />
             <ThemeToggle />
             <WalletNavSlot />
@@ -229,7 +230,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="relative">
+          <div className="relative" data-tour="command-center">
             <div className="rounded-[2rem] border border-white/10 bg-slate-950/72 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
               <div className="flex items-center justify-between border-b border-white/10 pb-4">
                 <div>
@@ -328,7 +329,10 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div
+            className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4"
+            data-tour="quick-links"
+          >
             {quickLinks.map((link) => {
               const Icon = link.icon;
               return (
@@ -402,6 +406,8 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      <ProductTour />
     </main>
   );
 }

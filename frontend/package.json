@@ -14,6 +14,7 @@
     "build-storybook": "storybook build",
     "upload-sourcemaps": "node scripts/upload-sourcemaps.js",
     "test:e2e": "playwright test",
+    "test:e2e:ci": "playwright test --reporter=list",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug"
   },
