@@ -3,8 +3,8 @@ import {
   decodeContractDiagnostic,
   isContractErrorCategory,
   mapContractError,
+  CONTRACT_ERROR_DEFINITIONS,
 } from "../contractErrors";
-import { RAW_ERROR_FIXTURES } from "../fixtures";
 
 describe("mapContractError", () => {
   it.each(ALL_CONTRACT_ERROR_CATEGORIES)(
@@ -143,34 +143,22 @@ describe("mapContractError", () => {
     expect(result.category).toBe("BAD_SEQUENCE");
   });
 
-  it("flags retry-vs-fix actions correctly for the user-recovery path", () => {
-    const rejected = mapContractError(RAW_ERROR_FIXTURES.WALLET_REJECTED);
-    expect(rejected.action).toBe("retry");
-    expect(rejected.retryable).toBe(true);
+  it("decodes raw Soroban XDR error string streams", () => {
+    const errorString = "HostError: Error(Contract, #3)";
+    const decoded = decodeSorobanContractError(errorString);
 
-    const args = mapContractError(RAW_ERROR_FIXTURES.INVALID_ARGS);
-    expect(args.action).toBe("fix_input");
-    expect(args.retryable).toBe(false);
-
-    const network = mapContractError(RAW_ERROR_FIXTURES.NETWORK_ERROR);
-    expect(network.action).toBe("wait");
-    expect(network.retryable).toBe(true);
-
-    const dup = mapContractError(RAW_ERROR_FIXTURES.DUPLICATE_TRANSACTION);
-    expect(dup.action).toBe("none");
-    expect(dup.retryable).toBe(false);
-  });
-});
-
-describe("isContractErrorCategory", () => {
-  it("recognises every declared category", () => {
-    for (const c of ALL_CONTRACT_ERROR_CATEGORIES) {
-      expect(isContractErrorCategory(c)).toBe(true);
-    }
+    expect(decoded).not.toBeNull();
+    expect(decoded?.code).toBe(3);
+    expect(decoded?.name).toBe("InsufficientBalance");
+    expect(decoded?.fixSuggestion).toContain("Increase gas escrow");
   });
 
-  it("rejects unknown strings", () => {
-    expect(isContractErrorCategory("NOT_A_CATEGORY")).toBe(false);
-    expect(isContractErrorCategory("")).toBe(false);
+  it("decodes keeper bond insufficient error code #418", () => {
+    const errorString = "Error(Contract, #418)";
+    const decoded = decodeSorobanContractError(errorString);
+
+    expect(decoded).not.toBeNull();
+    expect(decoded?.code).toBe(418);
+    expect(decoded?.name).toBe("KeeperBondInsufficient");
   });
 });

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { WalletNavSlot } from "@/app/components/WalletNavSlot";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ProductTour } from "@/src/components/ProductTour";
 import {
   FiActivity,
   FiArrowRight,
@@ -83,25 +84,29 @@ const quickLinks = [
   {
     href: "/tokenomics",
     title: "Tokenomics Flow",
-    description: "Model distribution flows, cycles, and pools inside the network.",
+    description:
+      "Model distribution flows, cycles, and pools inside the network.",
     icon: FiLayers,
   },
   {
     href: "/yield-calculator",
     title: "Yield Forecaster",
-    description: "Forecast simple vs compounded yields post keeper execution fees.",
+    description:
+      "Forecast simple vs compounded yields post keeper execution fees.",
     icon: FiTrendingUp,
   },
   {
     href: "/gas-optimization",
     title: "Gas Optimization",
-    description: "Estimate transaction costs, schedule off-peak, and simulate runs.",
+    description:
+      "Estimate transaction costs, schedule off-peak, and simulate runs.",
     icon: FiZap,
   },
   {
     href: "/tracing",
     title: "Distributed Tracing",
-    description: "Timeline waterfall diagnostics across services & block consensus.",
+    description:
+      "Timeline waterfall diagnostics across services & block consensus.",
     icon: FiActivity,
   },
 ];
@@ -139,12 +144,14 @@ export default function HomePage() {
             <Link
               className="rounded-full px-3 py-2 transition hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
               href="/dashboard"
+              prefetch={true}
             >
               Dashboard
             </Link>
             <Link
               className="rounded-full px-3 py-2 transition hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
               href="/marketplace"
+              prefetch={true}
             >
               Marketplace
             </Link>
@@ -155,12 +162,13 @@ export default function HomePage() {
               Settings
             </Link>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3" data-tour="wallet-slot">
             <LanguageSelector />
             <ThemeToggle />
             <WalletNavSlot />
             <Link
               href="/tasks"
+              prefetch={true}
               className="inline-flex items-center gap-2 rounded-full bg-emerald-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-200"
             >
               Launch
@@ -188,6 +196,7 @@ export default function HomePage() {
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
                 href="/tasks"
+                prefetch={true}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-300 px-6 py-3 text-base font-bold text-slate-950 shadow-xl shadow-emerald-950/30 transition hover:-translate-y-0.5 hover:bg-emerald-200"
               >
                 Create automation
@@ -316,7 +325,10 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div
+            className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4"
+            data-tour="quick-links"
+          >
             {quickLinks.map((link) => {
               const Icon = link.icon;
               return (
@@ -390,6 +402,8 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      <ProductTour />
     </main>
   );
 }

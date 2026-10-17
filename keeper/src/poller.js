@@ -661,7 +661,7 @@ class TaskPoller {
 
       let resolver = null;
       if (isDue) {
-        resolver = await this.evaluateResolverGate(taskId, taskConfig, currentTimestamp, { correlationId, taskLogger });
+        resolver = await this.evaluateResolverGate(taskId, taskConfig, currentTimestamp, { correlationId, taskLogger, registry });
         if (resolver && !resolver.isReady) {
           isDue = false;
           reason = resolver.reason === 'error'
@@ -724,6 +724,24 @@ class TaskPoller {
     }
 
     const taskLogger = options.taskLogger || this.logger;
+    const registry = options.registry || null;
+
+    // Serve a cached resolver result when one exists. The registry-level LRU
+    // cache (TTL + event-driven invalidation) lets unchanged tasks skip repeat
+    // resolver executions entirely (issue #788).
+    if (registry && typeof registry.getResolverResult === 'function') {
+      const cached = registry.getResolverResult(taskId);
+      if (cached) {
+        taskLogger.debug('Resolver result served from cache', {
+          taskId,
+          resolverId: cached.resolverId || resolverId,
+          isReady: cached.isReady,
+        });
+        return cached;
+      }
+    }
+
+    const canCache = registry && typeof registry.setResolverResult === 'function';
 
     if (!this.resolverRuntime) {
       taskLogger.warn('Task declares resolver but no resolver runtime is configured', {
@@ -757,7 +775,7 @@ class TaskPoller {
         });
       }
 
-      return {
+      const resolverResult = {
         resolverId,
         isReady: result.isReady,
         reason: result.reason || null,
@@ -766,6 +784,15 @@ class TaskPoller {
         runtime: result.runtime,
         durationMs: result.durationMs,
       };
+
+      // Populate the registry-level cache for subsequent polling cycles. Only
+      // the success path is cached; error/fallback outcomes are left out so a
+      // transient resolver failure is never masked for the full TTL.
+      if (canCache) {
+        registry.setResolverResult(taskId, resolverResult);
+      }
+
+      return resolverResult;
     } catch (error) {
       taskLogger.error('Resolver execution failed', {
         taskId,
@@ -858,69 +885,37 @@ class TaskPoller {
      */
   decodeTaskConfig(scVal) {
     try {
-      // Check if it's an Option::None
-      if (scVal.switch().name === 'scvVoid') {
+      if (!scVal) {
         return null;
       }
 
-      // For Option::Some, unwrap the value
-      let taskVal = scVal;
-      if (scVal.switch().name === 'scvVec') {
-        const vec = scVal.vec();
-        if (vec.length === 0) {
-          return null;
-        }
-        // Option::Some wraps the value in a vec with one element
-        taskVal = vec[0];
+      let val = scVal;
+      if (typeof val === 'string') {
+        val = xdr.ScVal.fromXDR(val, 'base64');
       }
 
-      // TaskConfig is a struct (scvMap)
-      if (taskVal.switch().name !== 'scvMap') {
-        this.logger.warn('Unexpected ScVal type for TaskConfig', { type: taskVal.switch().name });
+      const native = scValToNative(val);
+      if (native === null || native === undefined) {
         return null;
       }
 
-      const map = taskVal.map();
+      const raw = Array.isArray(native) ? native[0] : native;
+      if (!raw || typeof raw !== 'object') {
+        return null;
+      }
+
       const config = {};
-
-      // Extract fields from the map
-      map.forEach(entry => {
-        const key = scValToNative(entry.key());
-        const val = entry.val();
-
-        switch (key) {
-        case 'last_run':
-          config.last_run = Number(scValToNative(val));
-          break;
-        case 'interval':
-          config.interval = Number(scValToNative(val));
-          break;
-        case 'gas_balance':
-          config.gas_balance = Number(scValToNative(val));
-          break;
-        case 'creator':
-          config.creator = scValToNative(val);
-          break;
-        case 'target':
-          config.target = scValToNative(val);
-          break;
-        case 'function':
-          config.function = scValToNative(val);
-          break;
-        case 'args':
-          config.args = scValToNative(val);
-          break;
-        case 'resolver':
-          config.resolver = scValToNative(val);
-          break;
-        case 'whitelist':
-          config.whitelist = scValToNative(val);
-          break;
-        }
-      });
+      if (raw.last_run !== undefined) config.last_run = Number(raw.last_run);
+      if (raw.interval !== undefined) config.interval = Number(raw.interval);
+      if (raw.gas_balance !== undefined) config.gas_balance = Number(raw.gas_balance);
+      if (raw.creator !== undefined) config.creator = raw.creator;
+      if (raw.target !== undefined) config.target = raw.target;
+      if (raw.function !== undefined) config.function = raw.function;
+      if (raw.args !== undefined) config.args = raw.args;
+      if (raw.resolver !== undefined) config.resolver = raw.resolver;
+      if (raw.whitelist !== undefined) config.whitelist = raw.whitelist;
 
       return config;
-
     } catch (error) {
       this.logger.error('Error decoding TaskConfig XDR', { error: error.message });
       return null;

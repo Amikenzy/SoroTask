@@ -12,6 +12,7 @@ const { ensureSchema, buildMerkleProofResponse } = require('./merkleStore');
 const { metricsHandler } = require('./metrics');
 const { createRateLimiter } = require('./rateLimiter');
 const { traceContextMiddleware } = require('../../scripts/traceContext');
+const { requestSpanMiddleware, getTrace } = require('./otel');
 const { openApiSpec } = require('./openapi');
 
 const DEFAULT_PORT = 4000;
@@ -23,12 +24,22 @@ const DEFAULT_PORT = 4000;
 function registerRestRoutes(app, deps = dbHelpers) {
   // Attach W3C TraceContext middleware
   app.use(traceContextMiddleware('indexer'));
-
-  // Attach rate limiter middleware
-  app.use(createRateLimiter());
+  // #1211 — OpenTelemetry-compatible request spans (parented by the incoming
+  // W3C traceparent) recorded per request for distributed tracing.
+  app.use(requestSpanMiddleware('sorotask-indexer'));
 
   // Metrics endpoint
   app.get('/metrics', metricsHandler);
+
+  // #1211 — distributed trace lookup for operators (single trace across
+  // frontend -> indexer -> keeper -> Soroban RPC).
+  app.get('/api/traces/:traceId', (req, res) => {
+    const spans = getTrace(req.params.traceId);
+    if (!spans) {
+      return res.status(404).json({ error: 'Trace not found', traceId: req.params.traceId });
+    }
+    return res.json({ traceId: req.params.traceId, spans });
+  });
 
   // Health and protected endpoint routes for REST API
   app.get('/api/health', (req, res) => {
@@ -62,6 +73,47 @@ function registerRestRoutes(app, deps = dbHelpers) {
     }
   });
 
+  // Issue #798: allow a task creator to register (or update) a real-time webhook
+  // destination with a shared secret used to HMAC-sign outbound deliveries.
+  app.post('/api/webhook/register', async (req, res) => {
+    try {
+      const { task_id: taskId, url, secret_key: secretKey } = req.body || {};
+      const parsedTaskId = Number(taskId);
+      if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+        return res.status(400).json({ error: 'task_id must be a positive integer' });
+      }
+      if (!url || typeof url !== 'string' || !/^https?:\/\/.+/.test(url)) {
+        return res.status(400).json({ error: 'url must be a valid http(s) URL' });
+      }
+      if (secretKey != null && (typeof secretKey !== 'string' || secretKey.length > 1024)) {
+        return res.status(400).json({ error: 'secret_key must be a string (<= 1024 chars)' });
+      }
+
+      // Ensure the runtime table carries the webhook metadata columns. This is
+      // idempotent and also widens pre-existing databases created before the
+      // columns were introduced.
+      await deps.queryRun('ALTER TABLE tasks ADD COLUMN webhook_url TEXT').catch(() => {});
+      await deps.queryRun('ALTER TABLE tasks ADD COLUMN webhook_secret_key TEXT').catch(() => {});
+
+      const result = await deps.queryRun(
+        'UPDATE tasks SET webhook_url = ?, webhook_secret_key = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?',
+        [url, secretKey || null, parsedTaskId],
+      );
+
+      if (!result || result.changes === 0) {
+        return res.status(404).json({ error: `Task ${parsedTaskId} not found` });
+      }
+
+      const task = await deps.queryGet(
+        'SELECT task_id, creator, webhook_url FROM tasks WHERE task_id = ?',
+        [parsedTaskId],
+      );
+      return res.status(200).json({ registered: true, task });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // Issue #825: query cold-storage archives
   app.get('/events/archived', requireRole(ROLES.USER), async (req, res) => {
     if (!req.query.contractId) {
@@ -86,17 +138,17 @@ function createExpressApp() {
   app.use(express.json());
   app.use('/api/cross-chain', createCrossChainRouter());
 
-  // Prometheus scrape target - mounted ahead of auth/rate-limiting
+  // Prometheus scrape target and public docs remain accessible without login.
   app.get('/metrics', metricsHandler);
-
-  registerRestRoutes(app);
-
   app.use(expressJwtAuth);
+  app.use(createRateLimiter());
 
   app.get('/api-docs.json', (req, res) => res.json(openApiSpec));
   if (openApiSpec) {
     app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
   }
+
+  registerRestRoutes(app);
 
   ensureSchema(dbHelpers).catch((err) => {
     console.error('Failed to ensure merkle schema:', err);
@@ -105,10 +157,21 @@ function createExpressApp() {
   const schema = makeExecutableSchema({ typeDefs, resolvers });
   app.locals.graphqlSchema = schema;
 
+const {
+  createDepthRule,
+  createComplexityLimitRule,
+  createPaginationBoundsRule,
+} = require('./graphql/complexity');
+
   const server = new ApolloServer({
     schema,
     context: createContext,
     introspection: true,
+    validationRules: [
+      createDepthRule(5),
+      createComplexityLimitRule(1000),
+      createPaginationBoundsRule(50),
+    ],
   });
 
   app.locals.graphqlReady = server

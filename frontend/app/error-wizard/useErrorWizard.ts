@@ -7,18 +7,17 @@ import {
 } from '@/src/lib/errors/contractErrors';
 import type { FailureLog, WizardStep, WizardState, ResolutionAction } from './types';
 
-// ---------------------------------------------------------------------------
-// Step generation — maps a MappedContractError to fix actions
-// ---------------------------------------------------------------------------
-
 let stepCounter = 0;
 
 export function generateSteps(logs: FailureLog[]): WizardStep[] {
-  // Deduplicate by category so we don't repeat the same fix twice
   const seen = new Set<string>();
   const steps: WizardStep[] = [];
 
   for (const log of logs) {
+    // 1. Try decoding raw Soroban contract error stream / discriminant
+    const diagnostic = decodeSorobanContractError(log.errorMessage) || decodeSorobanContractError(log.errorCode);
+    
+    // 2. Fall back to mapped contract error category
     const mapped = mapContractError({
       message: log.errorMessage,
       code: log.errorCode,
@@ -28,10 +27,14 @@ export function generateSteps(logs: FailureLog[]): WizardStep[] {
       ? undefined
       : decodeContractDiagnostic(log.diagnosticPayload);
 
-    if (seen.has(mapped.category)) continue;
-    seen.add(mapped.category);
+    const stepKey = diagnostic ? `contract-${diagnostic.code}` : mapped.category;
+    if (seen.has(stepKey)) continue;
+    seen.add(stepKey);
 
-    const actions = buildActions(mapped.category, log);
+    const actions = diagnostic
+      ? buildDiagnosticActions(diagnostic)
+      : buildActions(mapped.category, log);
+
     if (actions.length === 0) continue;
 
     steps.push({
@@ -46,6 +49,62 @@ export function generateSteps(logs: FailureLog[]): WizardStep[] {
   }
 
   return steps;
+}
+
+function buildDiagnosticActions(diagnostic: ReturnType<typeof decodeSorobanContractError> & object): ResolutionAction[] {
+  switch (diagnostic.action) {
+    case 'increase_gas':
+      return [
+        {
+          type: 'increase_gas',
+          label: 'Increase gas escrow (+50 XLM)',
+          description: diagnostic.fixSuggestion,
+          patch: { field: 'gasBalance', value: 50 },
+        },
+      ];
+    case 'reconnect_wallet':
+      return [
+        {
+          type: 'reconnect_wallet',
+          label: 'Reconnect Authorized Wallet',
+          description: diagnostic.fixSuggestion,
+        },
+      ];
+    case 'switch_network':
+      return [
+        {
+          type: 'switch_network',
+          label: 'Switch Network',
+          description: diagnostic.fixSuggestion,
+        },
+      ];
+    case 'wait':
+      return [
+        {
+          type: 'wait_and_retry',
+          label: 'Wait & Retry Execution',
+          description: diagnostic.fixSuggestion,
+        },
+      ];
+    case 'retry':
+      return [
+        {
+          type: 'wait_and_retry',
+          label: 'Retry Execution',
+          description: diagnostic.fixSuggestion,
+        },
+      ];
+    case 'fix_input':
+    default:
+      return [
+        {
+          type: 'fix_contract_address',
+          label: 'Apply Remediation Fix',
+          description: diagnostic.fixSuggestion,
+          patch: { field: 'remediation', value: diagnostic.name },
+        },
+      ];
+  }
 }
 
 function buildActions(
@@ -103,8 +162,8 @@ function buildActions(
     case 'WRONG_NETWORK':
       return [{
         type: 'switch_network',
-        label: 'Switch to Futurenet',
-        description: 'Open Freighter and switch the network to Futurenet.',
+        label: 'Switch Network',
+        description: 'Open Freighter and switch the network to active chain.',
       }];
     case 'INVALID_ARGS':
     case 'SIMULATION_FAILED':
@@ -163,10 +222,6 @@ function buildActions(
       }];
   }
 }
-
-// ---------------------------------------------------------------------------
-// Reducer
-// ---------------------------------------------------------------------------
 
 type Action =
   | { type: 'ANALYZE'; logs: FailureLog[] }
@@ -227,10 +282,6 @@ function reducer(state: WizardState, action: Action): WizardState {
       return state;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
 
 export function useErrorWizard() {
   const [state, dispatch] = useReducer(reducer, initial);

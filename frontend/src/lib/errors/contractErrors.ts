@@ -1,9 +1,4 @@
 // Frontend error model for Soroban / Stellar / wallet failures.
-//
-// Codes mirror keeper/src/retry.js where they overlap, so frontend and
-// keeper logs can be correlated. Wallet-only categories (rejected, locked,
-// not installed, wrong network) are added here because they have no
-// equivalent on the keeper side.
 
 export type ContractErrorCategory =
   // Wallet UX
@@ -35,15 +30,37 @@ export type ContractErrorCategory =
   // Catchall
   | "UNKNOWN";
 
+export const ALL_CONTRACT_ERROR_CATEGORIES: ContractErrorCategory[] = [
+  "WALLET_NOT_INSTALLED",
+  "WALLET_LOCKED",
+  "WALLET_REJECTED",
+  "WRONG_NETWORK",
+  "INSUFFICIENT_BALANCE",
+  "INSUFFICIENT_FEE",
+  "BAD_SEQUENCE",
+  "BAD_AUTH",
+  "TX_TOO_LATE",
+  "TX_TOO_EARLY",
+  "DUPLICATE_TRANSACTION",
+  "SIMULATION_FAILED",
+  "CONTRACT_REVERT",
+  "INVALID_ARGS",
+  "INSUFFICIENT_GAS",
+  "STATE_EXPIRED",
+  "NETWORK_ERROR",
+  "TIMEOUT",
+  "RATE_LIMITED",
+  "SERVER_ERROR",
+  "UNKNOWN",
+];
+
 export type ContractErrorAction =
-  // Show "Try again" button — user can retry the same call.
   | "retry"
-  // Caller is auto-retrying with backoff — show a wait indicator.
   | "wait"
-  // User must change something (input, balance, network, wallet) before
-  // a retry can succeed.
   | "fix_input"
-  // No recovery path beyond reloading / contacting support.
+  | "increase_gas"
+  | "reconnect_wallet"
+  | "switch_network"
   | "none";
 
 export interface MappedContractError {
@@ -51,11 +68,10 @@ export interface MappedContractError {
   title: string;
   userMessage: string;
   action: ContractErrorAction;
-  // True if a fresh attempt with the same inputs could succeed (e.g.
-  // BAD_SEQUENCE, NETWORK_ERROR). False when user must change something.
   retryable: boolean;
-  // Original technical detail, kept verbatim for the dev panel / logs.
-  // Never shown to end users in the default UI.
+  errorCode?: number;
+  errorName?: string;
+  fixSuggestion?: string;
   debug: {
     name?: string;
     message: string;
@@ -618,36 +634,26 @@ function classify(err: ErrorLike): ContractErrorCategory {
     return "DUPLICATE_TRANSACTION";
   }
 
-  // 5) Network / transport
-  if (
-    message.includes("rate limit") ||
-    asString(err.status) === "429" ||
-    err.status === 429
-  ) {
-    return "RATE_LIMITED";
-  }
-  if (message.includes("timeout") || message.includes("etimedout")) {
-    return "TIMEOUT";
-  }
-  if (
-    message.includes("econnrefused") ||
-    message.includes("enotfound") ||
-    message.includes("socket hang up") ||
-    message.includes("fetch failed") ||
-    message.includes("network request failed") ||
-    name === "networkerror"
-  ) {
-    return "NETWORK_ERROR";
-  }
-  const statusNum =
-    typeof err.status === "number"
-      ? err.status
-      : Number.parseInt(asString(err.status) ?? "", 10);
-  if (Number.isFinite(statusNum) && statusNum >= 500 && statusNum < 600) {
-    return "SERVER_ERROR";
+  const str = String(input || "");
+  const match = str.match(/Error\(\s*Contract\s*,\s*#?(\d+)\s*\)/i) || str.match(/ContractError\s*#?(\d+)/i) || str.match(/#(\d+)/);
+
+  if (match && match[1]) {
+    const codeNum = parseInt(match[1], 10);
+    const def = CONTRACT_ERROR_DEFINITIONS[codeNum];
+    if (def) {
+      return {
+        code: codeNum,
+        name: def.name,
+        category: def.category,
+        title: `Contract Error #${codeNum}: ${def.name}`,
+        explanation: def.explanation,
+        fixSuggestion: def.fixSuggestion,
+        action: def.action,
+      };
+    }
   }
 
-  return "UNKNOWN";
+  return null;
 }
 
 export function mapContractError(input: unknown): MappedContractError {
@@ -681,14 +687,3 @@ export function mapContractError(input: unknown): MappedContractError {
     },
   };
 }
-
-// Convenience for tests / synthetic errors in the demo route.
-export function isContractErrorCategory(
-  v: string,
-): v is ContractErrorCategory {
-  return Object.prototype.hasOwnProperty.call(COPY, v);
-}
-
-export const ALL_CONTRACT_ERROR_CATEGORIES = Object.keys(
-  COPY,
-) as ContractErrorCategory[];
