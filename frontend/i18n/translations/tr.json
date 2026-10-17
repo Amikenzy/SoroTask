@@ -92,5 +92,33 @@
     "seconds_short": "sn",
     "interval_display": "{hours} sa ({seconds} saniye)",
     "xlm_unit": "XLM"
+  },
+  "offline": {
+    "title": "Bağlantı durumu",
+    "online": "Çevrimiçi",
+    "offline": "Çevrimdışı",
+    "resyncing": "Yeniden eşitleniyor",
+    "sync_failed": "Eşitleme başarısız",
+    "queued_actions": "{count, plural, =0 {Kuyrukta işlem yok} one {Kuyrukta # işlem var} other {Kuyrukta # işlem var}}",
+    "replaying": "{count, plural, one {Kuyruktaki # işlem yeniden yürütülüyor} other {Kuyruktaki # işlem yeniden yürütülüyor}}",
+    "still_queued": "{count, plural, one {# işlem hâlâ kuyrukta} other {# işlem hâlâ kuyrukta}}",
+    "browse_cached": "Önbelleğe alınmış içeriklere göz atabilirsiniz. Değişiklikler kuyruğa alınır.",
+    "will_run_when_back": "Yeniden çevrimiçi olduğunuzda çalıştırılır.",
+    "retry": "Yeniden dene",
+    "read_only_notice": "Salt okunur moddasınız. Değişiklikler yeniden çevrimiçi olduğunuzda gönderilir."
+  },
+  "theme": {
+    "label": "Tema",
+    "light": "Açık",
+    "dark": "Koyu",
+    "oled": "Yüksek kontrastlı OLED",
+    "system": "Sistem",
+    "change": "Tema: {mode}. Değiştirmek için tıklayın.",
+    "resolving_to": "Şu anda {resolved} olarak ayarlanıyor."
+  },
+  "language": {
+    "label": "Dil seçin",
+    "loading": "Dil yükleniyor...",
+    "available": "{count, plural, =0 {Kullanılabilir dil yok} one {# dil} other {# dil}}"
   }
 }

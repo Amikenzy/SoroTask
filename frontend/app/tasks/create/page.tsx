@@ -8,6 +8,8 @@ import {
   WizardStep,
   SimulationResult,
 } from '@/types/task-wizard.types';
+import TaskCreationForm from '@/app/components/TaskCreationForm';
+import { WalletButton } from '@/app/components/WalletButton';
 
 const INITIAL_FORM_DATA: TaskWizardFormData = {
   targetContractId: '',
@@ -104,6 +106,15 @@ export default function CreateTaskWizardPage() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 bg-card border rounded-xl shadow-md my-10 text-card-foreground">
+      <header className="flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-center sm:justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-bold">Create Automation Task</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Connect a wallet, then register a recurring Soroban task.
+          </p>
+        </div>
+        <WalletButton />
+      </header>
       {/* Wizard Progress Stepper */}
       <div className="flex justify-between items-center mb-8 border-b pb-4">
         {[
@@ -308,6 +319,12 @@ export default function CreateTaskWizardPage() {
           </button>
         )}
       </div>
+
+      {/* Quick Task Creation Form */}
+      <section className="mt-12 pt-8 border-t border-border">
+        <h2 className="text-xl font-bold mb-4">Quick Task Registration</h2>
+        <TaskCreationForm />
+      </section>
     </div>
   );
 }

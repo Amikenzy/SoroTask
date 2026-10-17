@@ -3,12 +3,13 @@ const {
   xdr,
   TransactionBuilder,
   BASE_FEE,
-  Networks,
   rpc: SorobanRpc,
 } = require("@stellar/stellar-sdk");
 const { withRetry, ErrorClassification } = require("./retry.js");
 const { createLogger } = require("./logger.js");
+const { withSpan } = require("./otel.js");
 const { createStructuredError, fromError } = require("./structuredErrors.js");
+const { getExecutionCoordinator } = require("./coordinator.js");
 
 const POLL_ATTEMPTS = 30;
 const POLL_INTERVAL_MS = 2000;
@@ -60,7 +61,7 @@ function resultName(code) {
  * @param {number|bigint} taskId
  * @returns {Promise<object|null>} The parsed execution trace or null
  */
-async function getExecutionTrace(server, contractId, taskId) {
+async function getExecutionTrace(server, contractId, taskId, networkPassphrase) {
   try {
     const contract = new Contract(contractId);
     const taskIdScVal = xdr.ScVal.scvU64(
@@ -68,7 +69,7 @@ async function getExecutionTrace(server, contractId, taskId) {
     );
     const tx = new TransactionBuilder(null, {
       fee: BASE_FEE,
-      networkPassphrase: Networks.FUTURENET,
+      networkPassphrase,
     })
       .addOperation(contract.call("get_execution_trace", taskIdScVal))
       .setTimeout(30)
@@ -182,9 +183,18 @@ function normalizeSubmissionError(error, fallbackCode, correlationId) {
 
 async function executeTaskOnce(
   taskId,
-  { server, keypair, account, contractId, networkPassphrase, correlationId, logger: customLogger, dueTime, metricsServer, config, hsmSigner },
+  { server, keypair, account, contractId, networkPassphrase: rawNetworkPassphrase, correlationId, logger: customLogger, dueTime, metricsServer, config, hsmSigner, fencingToken, lockToken, coordinator: customCoordinator },
 ) {
   const taskLogger = customLogger || logger;
+  const networkPassphrase = rawNetworkPassphrase || config?.networkPassphrase || process.env.NETWORK_PASSPHRASE;
+
+  // ── Fencing token guard: abort if lock is stale before doing any network work ──
+  const coord = customCoordinator || getExecutionCoordinator();
+  if (fencingToken != null) {
+    coord.assertValidExecution(taskId, fencingToken, lockToken, correlationId);
+    taskLogger.debug('Fencing token validated before simulation', { taskId, fencingToken, correlationId });
+  }
+
   const contract = new Contract(contractId);
   const taskIdScVal = xdr.ScVal.scvU64(
     xdr.Uint64.fromString(taskId.toString()),
@@ -195,7 +205,7 @@ async function executeTaskOnce(
   const fee = Math.max(BASE_FEE, Math.round(BASE_FEE * multiplier));
   const tx = new TransactionBuilder(account, {
     fee,
-    networkPassphrase: networkPassphrase || Networks.FUTURENET,
+    networkPassphrase,
   })
     .addOperation(contract.call("execute", taskIdScVal))
     .setTimeout(30)
@@ -204,7 +214,12 @@ async function executeTaskOnce(
   let simResult;
   try {
     taskLogger.debug("Simulating task execution", { taskId, correlationId });
-    simResult = await server.simulateTransaction(tx);
+    // #1211 — Soroban RPC requests participate in the distributed trace.
+    simResult = await withSpan(
+      "soroban.simulate_transaction",
+      () => server.simulateTransaction(tx),
+      { task_id: taskId.toString(), correlation_id: correlationId ?? "" },
+    );
   } catch (error) {
     throw normalizeSubmissionError(error, "NETWORK_ERROR", correlationId);
   }
@@ -218,6 +233,12 @@ async function executeTaskOnce(
   }
 
   const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
+
+  // ── Fencing token guard: abort before signing — catches GC-pause races ──
+  if (fencingToken != null) {
+    coord.assertValidExecution(taskId, fencingToken, lockToken, correlationId);
+    taskLogger.debug('Fencing token validated before signing', { taskId, fencingToken, correlationId });
+  }
 
   if (hsmSigner) {
     await hsmSigner.signTransaction(preparedTx);
@@ -251,10 +272,30 @@ async function executeTaskOnce(
     }
   }
 
+  // ── Fencing token guard: final check before hitting the network ──
+  // This is the last chance to abort if the lock expired or was superseded
+  // during simulation / signing (e.g. after a node GC pause).
+  if (fencingToken != null) {
+    coord.assertValidExecution(taskId, fencingToken, lockToken, correlationId);
+    taskLogger.debug('Fencing token validated before sendTransaction', { taskId, fencingToken, correlationId });
+  }
+
   let sendResult;
   try {
     taskLogger.debug("Submitting transaction", { taskId, correlationId });
-    sendResult = await server.sendTransaction(preparedTx);
+    // #1211 — the submission span carries the txHash so the keeper side of
+    // the trace can be joined with the indexer's record of the transaction.
+    //
+    // Memo propagation note (#1211): Soroban transactions do not support a
+    // memo field (unlike Stellar classic), so the trace ID cannot ride in
+    // the envelope. Correlation is achieved through W3C traceparent headers
+    // on the HTTP layer and by tagging the resulting txHash on this span;
+    // the indexer indexes by txHash, closing the loop.
+    sendResult = await withSpan(
+      "soroban.send_transaction",
+      () => server.sendTransaction(preparedTx),
+      { task_id: taskId.toString(), correlation_id: correlationId ?? "" },
+    );
   } catch (error) {
     recordLateness('failure');
     throw normalizeSubmissionError(error, "NETWORK_ERROR");
@@ -312,7 +353,7 @@ async function executeTaskOnce(
   // Capture execution trace from on-chain data for debugging
   let executionTrace = null;
   try {
-    executionTrace = await getExecutionTrace(server, contractId, taskId);
+    executionTrace = await getExecutionTrace(server, contractId, taskId, networkPassphrase);
     if (executionTrace) {
       taskLogger.debug("Execution trace captured", {
         taskId,
@@ -342,10 +383,11 @@ async function executeTaskOnce(
  */
 async function executeTask(
   taskId,
-  { server, keypair, account, contractId, networkPassphrase, correlationId, dueTime, metricsServer, config, hsmSigner },
+  { server, keypair, account, contractId, networkPassphrase: rawNetworkPassphrase, correlationId, dueTime, metricsServer, config, hsmSigner },
 ) {
   /** @type {{taskId, txHash: string|null, status: string, feePaid: number, error: string|null, ledger: number|null, closeTime: number|null}} */
   const taskLogger = correlationId ? logger.childWithTrace(correlationId) : logger;
+  const networkPassphrase = rawNetworkPassphrase || config?.networkPassphrase || process.env.NETWORK_PASSPHRASE;
   /** @type {{taskId, txHash: string|null, status: string, feePaid: number, error: string|null}} */
   const result = {
     taskId,

@@ -1,4 +1,5 @@
 const http = require('http');
+const fs = require('fs');
 const promClient = require('prom-client');
 const { _Server } = require('socket.io');
 const { requireAdminAuth } = require('./auth');
@@ -349,6 +350,15 @@ class Metrics {
       totalEndpoints: 1,
       endpoints: [],
     };
+    this.fraudState = {
+      lastRiskScore: 0,
+      pendingAlerts: 0,
+      recentObservations: 0,
+    };
+    this.reconciliationState = {
+      lastDrift: 0,
+      pendingExecutions: 0,
+    };
     this.reset();
   }
 
@@ -542,6 +552,14 @@ class Metrics {
     };
   }
 
+  updateFraudState(state = {}) {
+    this.fraudState = { ...this.fraudState, ...state };
+  }
+
+  updateReconciliationState(state = {}) {
+    this.reconciliationState = { ...this.reconciliationState, ...state };
+  }
+
   snapshot() {
     return {
       ...this.counters,
@@ -552,6 +570,8 @@ class Metrics {
       dbShard: { ...this.dbShardState },
       drift: { ...this.driftState },
       failover: { ...this.failoverState },
+      fraud: { ...this.fraudState },
+      reconciliation: { ...this.reconciliationState },
     };
   }
 
@@ -607,10 +627,11 @@ class Metrics {
     let status = 'healthy';
     let statusDescription = 'Keeper is operating normally.';
 
-    if (!this.lastPollAt || rpcCircuitState === 'OPEN') {
+    const isInitialBoot = uptimeSeconds < 30;
+    if ((!this.lastPollAt && !isInitialBoot) || rpcCircuitState === 'OPEN') {
       status = 'unhealthy';
       statusDescription = 'Keeper is unavailable due to stale polling or broken RPC circuits.';
-    } else if (isStale) {
+    } else if (isStale && !isInitialBoot) {
       status = 'stale';
       statusDescription = 'Keeper polling is stale and may delay task execution. Check RPC and scheduler health.';
     } else if (backlogSize > 500 || retryBudgetPressure >= 0.95) {
@@ -648,14 +669,6 @@ class Metrics {
       healthIssues,
     };
   }
-
-  updateFraudState(state) {
-    Object.assign(this.fraudState, state);
-  }
-
-  updateReconciliationState(state) {
-    Object.assign(this.reconciliationState, state);
-  }
 }
 
 function createDefaultGasMonitor() {
@@ -689,7 +702,7 @@ class MetricsServer {
     this.gasMonitor = gasMonitor || createDefaultGasMonitor();
     this.logger = logger || createLogger('metrics');
     this.deadLetterQueue = deadLetterQueue || null;
-    this.port = options.port || parseInt(process.env.METRICS_PORT, 10) || 3000;
+    this.port = options.port ?? (parseInt(process.env.METRICS_PORT, 10) || 3000);
     this.healthStaleThreshold = options.healthStaleThreshold
       || parseInt(process.env.HEALTH_STALE_THRESHOLD_MS || '60000', 10);
     this.server = null;
@@ -700,31 +713,11 @@ class MetricsServer {
     this.controlStateProvider = options.controlStateProvider || null;
     this.controlActionHandler = options.controlActionHandler || null;
     this.historyManager = options.historyManager || null;
-    this.p2pStateProvider = options.p2pStateProvider || null;
-    this.failoverStateProvider = options.failoverStateProvider || null;
-    this.webhookHandler = options.webhookHandler || null;
-    this.webhookPath = options.webhookPath || '/webhook/trigger';
-    this.webhookPaths = new Set([
-      this.webhookPath,
-      '/webhooks/task-executions',
-    ]);
-    this.p2pStateProvider = options.p2pStateProvider || null;
-    this.streamHub = options.streamHub || null;
-    this.apiGateway = options.apiGateway || new ApiGateway({
-      defaultCapacity: options.defaultGatewayCapacity,
-      defaultRefillPerSecond: options.defaultGatewayRefillPerSecond,
-      defaultBillingUnits: options.defaultGatewayBillingUnits,
-    });
-    this.failurePredictor = options.failurePredictor || new FailurePredictor({
-      historyManager: this.historyManager,
-      deadLetterQueue: this.deadLetterQueue,
-      retryBudget: options.retryBudgetTracker || null,
-      logger: createLogger('failure-predictor'),
-    });
-    this.reputationScorer = options.reputationScorer || new KeeperReputationScorer({
-      historyManager: this.historyManager,
-      logger: createLogger('reputation-scorer'),
-    });
+    this.redisClient = options.redisClient || null;
+    this.workerPool = options.workerPool || null;
+    this.tmpPath = options.tmpPath || '/tmp';
+    this.redisLatencyThresholdMs = options.redisLatencyThresholdMs
+      || parseInt(process.env.REDIS_LATENCY_THRESHOLD_MS || '250', 10);
     this.register = new promClient.Registry();
 
     // Instantiate IndicatorRegistry for SLO observability.
@@ -797,6 +790,11 @@ class MetricsServer {
 
   setReconciliationEngine(engine) {
     this.reconciliationEngine = engine;
+  }
+
+  setReadinessProviders({ redisClient, workerPool } = {}) {
+    if (redisClient) this.redisClient = redisClient;
+    if (workerPool) this.workerPool = workerPool;
   }
 
   initPrometheusMetrics() {
@@ -1469,10 +1467,7 @@ class MetricsServer {
     }
 
     this.server = http.createServer(async (req, res) => {
-      const protect = (handler) => {
-        return () => requireAdminAuth(req, res, handler);
-      };
-
+      const protect = (handler) => () => requireAdminAuth(req, res, handler);
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -1484,27 +1479,13 @@ class MetricsServer {
       }
 
       const url = new URL(req.url, `http://127.0.0.1:${this.port}`);
-      const routePath = url.pathname;
+      if (url.pathname === '/healthz' || url.pathname === '/healthz/') {
+        this.handleLiveness(res);
 
-      if (this.apiGateway && routePath !== '/health' && routePath !== '/health/') {
-        const gatewayDecision = this.apiGateway.evaluate(req, routePath);
-        if (!gatewayDecision.allowed) {
-          this.increment('throttledRequestsTotal', { name: 'api-gateway' });
-          res.writeHead(429, {
-            'Content-Type': 'application/json',
-            'Retry-After': Math.ceil((gatewayDecision.retryAfterMs || 1000) / 1000),
-          });
-          res.end(JSON.stringify({
-            error: 'Too Many Requests',
-            route: routePath,
-            retryAfterMs: gatewayDecision.retryAfterMs,
-            policy: gatewayDecision.policy,
-          }, null, 2));
-          return;
-        }
-      }
+      } else if (url.pathname === '/readyz' || url.pathname === '/readyz/') {
+        await this.handleReadiness(res);
 
-      if (url.pathname === '/health' || url.pathname === '/health/') {
+      } else if (url.pathname === '/health' || url.pathname === '/health/') {
         this.handleHealth(res);
 
       } else if (req.url === '/metrics' || req.url === '/metrics/') {
@@ -1728,15 +1709,73 @@ class MetricsServer {
     res.end(JSON.stringify(healthData, null, 2));
   }
 
-  handleMetricsHistory(req, res) {
-    const url = new URL(req.url || '/metrics/history', 'http://localhost');
-    const limit = Math.min(
-      parseInt(url.searchParams.get('limit') || '60', 10),
-      this.metrics.history.maxSamples,
-    );
-    const samples = this.metrics.history.getSamples(limit);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ samples, count: samples.length }, null, 2));
+  handleLiveness(res) {
+    const status = this.metrics.getHealthStatus(this.healthStaleThreshold);
+    const healthy = status.status !== 'stale';
+    res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: healthy ? 'ok' : 'degraded',
+      uptime: status.uptime,
+      lastPollAt: status.lastPollAt,
+    }));
+  }
+
+  async handleReadiness(res) {
+    const checks = {
+      redis: await this.checkRedis(),
+      workers: this.checkWorkers(),
+      tmpDisk: this.checkTmpDisk(),
+    };
+    const healthy = Object.values(checks).every((check) => check.healthy);
+    res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: healthy ? 'ok' : 'degraded',
+      checks,
+    }, null, 2));
+  }
+
+  checkWorkers() {
+    if (!this.workerPool || typeof this.workerPool.getReadinessStatus !== 'function') {
+      return { healthy: false, reason: 'worker_pool_unavailable' };
+    }
+    return this.workerPool.getReadinessStatus();
+  }
+
+  async checkRedis() {
+    if (!this.redisClient || typeof this.redisClient.ping !== 'function') {
+      return { healthy: false, reason: 'redis_unavailable' };
+    }
+    const startedAt = Date.now();
+    try {
+      const response = await this.redisClient.ping();
+      const latencyMs = Date.now() - startedAt;
+      const healthy = response === 'PONG' && latencyMs <= this.redisLatencyThresholdMs;
+      return {
+        healthy,
+        connected: response === 'PONG',
+        latencyMs,
+        ...(latencyMs > this.redisLatencyThresholdMs ? { reason: 'queue_latency_high' } : {}),
+        ...(this.redisClient.isLocalFallback ? { localFallback: true } : {}),
+      };
+    } catch (error) {
+      return { healthy: false, connected: false, reason: 'redis_ping_failed', error: error.message };
+    }
+  }
+
+  checkTmpDisk() {
+    const minimumBytes = 2 * 1024 * 1024 * 1024;
+    try {
+      const stats = fs.statfsSync(this.tmpPath);
+      const availableBytes = Number(stats.bavail) * Number(stats.bsize);
+      return {
+        healthy: availableBytes > minimumBytes,
+        availableBytes,
+        minimumBytes,
+        path: this.tmpPath,
+      };
+    } catch (error) {
+      return { healthy: false, reason: 'tmp_disk_check_failed', error: error.message, path: this.tmpPath };
+    }
   }
 
   handleMetrics(res) {
@@ -1910,6 +1949,83 @@ class MetricsServer {
       this.logger.error('Error reading reconciliation state', { error: error.stack });
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to read reconciliation state' }));
+    }
+  }
+
+  /**
+   * Issue #783: GET /admin/dead-letter — list quarantined tasks + stats.
+   * Routed and auth-protected already (see the routing table above); this
+   * method itself was never implemented, so hitting the route threw
+   * "handleDeadLetter is not a function".
+   */
+  handleDeadLetter(res) {
+    if (!this.deadLetterQueue) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Dead-letter queue unavailable' }));
+      return;
+    }
+
+    try {
+      const payload = {
+        stats: this.deadLetterQueue.getStats(),
+        records: this.deadLetterQueue.getAllRecords(),
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload, null, 2));
+    } catch (error) {
+      this.logger.error('Error reading dead-letter queue state', { error: error.stack });
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to read dead-letter queue state' }));
+    }
+  }
+
+  /**
+   * Issue #783: POST /admin/dead-letter/{taskId}/retry and
+   * /admin/dead-letter/{taskId}/purge — per-task recovery/removal.
+   * Retrying only clears quarantine/backoff state so the task is eligible
+   * again on the next poll cycle; it doesn't execute the task directly.
+   */
+  handleDeadLetterTask(req, res) {
+    if (!this.deadLetterQueue) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Dead-letter queue unavailable' }));
+      return;
+    }
+
+    const match = req.url.match(/^\/admin\/dead-letter\/([^/]+)\/(retry|purge)\/?$/);
+    if (!match || req.method !== 'POST') {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not Found' }));
+      return;
+    }
+
+    const taskId = Number(match[1]);
+    const action = match[2];
+
+    try {
+      if (action === 'retry') {
+        if (!this.deadLetterQueue.isQuarantined(taskId)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Task is not quarantined' }));
+          return;
+        }
+        this.deadLetterQueue.recover(taskId, 'manual_admin_retry');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'recovered', taskId }));
+      } else {
+        const purged = this.deadLetterQueue.purgeTask(taskId);
+        if (!purged) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'No dead-letter record for this task' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'purged', taskId }));
+      }
+    } catch (error) {
+      this.logger.error('Error handling dead-letter admin action', { error: error.stack, taskId, action });
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to process request' }));
     }
   }
 
@@ -2127,15 +2243,27 @@ class MetricsServer {
   }
 
   updateFraudState(state) {
-    this.metrics.updateFraudState(state);
-    this.promFraudRiskScore.set(this.metrics.fraudState.lastRiskScore || 0);
-    this.promFraudPendingAlerts.set(this.metrics.fraudState.pendingAlerts || 0);
+    if (this.metrics && typeof this.metrics.updateFraudState === 'function') {
+      this.metrics.updateFraudState(state);
+    }
+    if (this.promFraudRiskScore) {
+      this.promFraudRiskScore.set(this.metrics?.fraudState?.lastRiskScore || state?.lastRiskScore || 0);
+    }
+    if (this.promFraudPendingAlerts) {
+      this.promFraudPendingAlerts.set(this.metrics?.fraudState?.pendingAlerts || state?.pendingAlerts || 0);
+    }
   }
 
   updateReconciliationState(state) {
-    this.metrics.updateReconciliationState(state);
-    this.promReconciliationDrift.set(this.metrics.reconciliationState.lastDrift || 0);
-    this.promReconciliationPending.set(this.metrics.reconciliationState.pendingExecutions || 0);
+    if (this.metrics && typeof this.metrics.updateReconciliationState === 'function') {
+      this.metrics.updateReconciliationState(state);
+    }
+    if (this.promReconciliationDrift) {
+      this.promReconciliationDrift.set(this.metrics?.reconciliationState?.lastDrift || state?.lastDrift || 0);
+    }
+    if (this.promReconciliationPending) {
+      this.promReconciliationPending.set(this.metrics?.reconciliationState?.pendingExecutions || state?.pendingExecutions || 0);
+    }
   }
 
   updateAdminState(state) {

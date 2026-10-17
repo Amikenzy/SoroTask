@@ -1,12 +1,31 @@
+const { createHmac } = require("node:crypto");
 const { DEFAULT_MAX_ATTEMPTS, computeBackoffDelayMs } = require("./backoff");
 const { CircuitBreakerRegistry } = require("./circuitBreaker");
 const { storeDeadLetter } = require("./deadLetterStore");
+const { assertPublicHttpUrl, SsrfError } = require("./ssrfGuard");
+
+const SIGNATURE_HEADER = "x-sorotask-signature";
+const SIGNATURE_PREFIX = "sha256=";
+
+/**
+ * Sign a webhook payload with HMAC-SHA256 using the destination's secret key.
+ * Returns undefined when no secret key is configured, so the caller can skip
+ * the signature header entirely for unauthenticated webhooks.
+ * @param {string} payload JSON string to sign
+ * @param {string} secretKey base64 secret key registered by the task creator
+ * @returns {string | undefined}
+ */
+function signWebhookPayload(payload, secretKey) {
+  if (!secretKey) return undefined;
+  return `${SIGNATURE_PREFIX}${createHmac("sha256", secretKey).update(payload).digest("hex")}`;
+}
 
 /**
  * @typedef {object} WebhookDeliveryRequest
  * @property {string} destinationId
  * @property {string} url
  * @property {object} body
+ * @property {string} [secretKey] - Optional base64 secret used to HMAC-sign the payload
  */
 
 class WebhookDispatcher {
@@ -16,18 +35,47 @@ class WebhookDispatcher {
    * @param {CircuitBreakerRegistry} [options.circuitBreaker]
    * @param {number} [options.maxAttempts]
    * @param {(ms:number)=>Promise<void>} [options.sleep]
+   * @param {object} [options.ssrf] - Options forwarded to assertPublicHttpUrl
+   *   (e.g. `{ resolve: true }` to also DNS-validate hostnames).
    */
   constructor(options = {}) {
     this.fetchImpl = options.fetchImpl || global.fetch;
     this.circuitBreaker = options.circuitBreaker || new CircuitBreakerRegistry();
     this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.ssrfOptions = options.ssrf ?? {};
   }
 
   async dispatch(request) {
-    const { destinationId, url, body } = request;
+    const { destinationId, url, body, secretKey } = request;
     if (!destinationId || !url) {
       throw new Error("destinationId and url are required");
+    }
+
+    // SSRF guard (#1208): reject private/loopback/link-local targets before
+    // any network activity. Rejections are dead-lettered for auditability and
+    // never retried.
+    try {
+      await assertPublicHttpUrl(url, this.ssrfOptions);
+    } catch (ssrfError) {
+      if (ssrfError instanceof SsrfError) {
+        storeDeadLetter({
+          destinationId,
+          url,
+          body,
+          attempts: 0,
+          error: ssrfError.message,
+          reason: "ssrf_rejected",
+        });
+      }
+      throw ssrfError;
+    }
+
+    const payload = JSON.stringify(body);
+    const signature = signWebhookPayload(payload, secretKey);
+    const headers = { "Content-Type": "application/json" };
+    if (signature) {
+      headers[SIGNATURE_HEADER] = signature;
     }
 
     if (this.circuitBreaker.isOpen(destinationId)) {
@@ -55,8 +103,8 @@ class WebhookDispatcher {
       try {
         const response = await this.fetchImpl(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          headers,
+          body: payload,
         });
         if (!response.ok) {
           throw new Error(`Webhook returned HTTP ${response.status}`);
@@ -82,4 +130,4 @@ class WebhookDispatcher {
   }
 }
 
-module.exports = { WebhookDispatcher };
+module.exports = { WebhookDispatcher, signWebhookPayload, SIGNATURE_HEADER, SIGNATURE_PREFIX };

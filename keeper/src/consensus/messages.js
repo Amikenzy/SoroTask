@@ -78,7 +78,7 @@ function createMessage(type, data, keeperId, secret) {
  */
 function signMessage(message, secret) {
   // Remove signature field for signing
-  const { _signature, ...unsigned } = message;
+  const { signature, ...unsigned } = message;
   const payload = JSON.stringify(unsigned);
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
@@ -90,9 +90,17 @@ function signMessage(message, secret) {
  * @returns {boolean} True if signature is valid
  */
 function verifySignature(message, secret) {
+  if (!message || !message.signature || typeof message.signature !== 'string' || !secret) {
+    return false;
+  }
   const { signature, ...unsigned } = message;
   const expectedSig = signMessage(unsigned, secret);
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig));
+  const sigBuf = Buffer.from(signature);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(sigBuf, expectedBuf);
 }
 
 /**

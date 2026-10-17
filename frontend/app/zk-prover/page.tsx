@@ -1,9 +1,19 @@
 "use client";
 
 import React from "react";
-import { ZKProverPanel } from "@/src/components/zk-proof";
-import type { ZkTask } from "@/src/lib/zk-proof";
-import { useWalletOptional } from "@/app/context/WalletContext";
+import dynamic from "next/dynamic";
+
+const ZKProverPanel = dynamic(
+  () => import("@/src/components/zk-proof").then((mod) => mod.ZKProverPanel),
+  {
+    loading: () => (
+      <div className="rounded-3xl border border-neutral-800 bg-neutral-900/60 p-8 text-center text-sm text-neutral-400 animate-pulse">
+        Loading ZK Prover cryptographic WASM modules...
+      </div>
+    ),
+    ssr: false,
+  },
+);
 
 export default function ZKProverPage() {
   const { session, openConnectModal } = useWalletOptional();
