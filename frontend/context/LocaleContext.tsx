@@ -6,13 +6,14 @@
 'use client';
 
 import React, { createContext, useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Locale } from '../i18n/index';
 import {
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
-  getStoredLocale,
+  getStoredLocalePreference,
   saveLocale,
-  detectLocale,
+  getTextDirection,
 } from '../i18n/index';
 
 interface LocaleContextType {
@@ -32,45 +33,33 @@ export function LocaleProvider({
   children,
   defaultLocale = DEFAULT_LOCALE,
 }: LocaleProviderProps) {
+  const router = useRouter();
   const [locale, setLocaleState] = useState<Locale>(defaultLocale);
-  const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize locale on mount
   useEffect(() => {
-    setIsLoading(true);
-
-    try {
-      // Try to get stored locale, otherwise detect from browser
-      const storedLocale = getStoredLocale();
-      const detectedLocale = detectLocale();
-      const initialLocale = storedLocale || detectedLocale || DEFAULT_LOCALE;
-
-      if (SUPPORTED_LOCALES.includes(initialLocale)) {
-        setLocaleState(initialLocale);
-      } else {
-        setLocaleState(defaultLocale);
-      }
-    } catch {
-      setLocaleState(defaultLocale);
-    } finally {
-      setIsLoading(false);
-    }
+    setLocaleState(defaultLocale);
+    document.documentElement.lang = defaultLocale;
+    document.documentElement.dir = getTextDirection(defaultLocale);
   }, [defaultLocale]);
 
   const setLocale = useCallback((newLocale: Locale) => {
     if (SUPPORTED_LOCALES.includes(newLocale)) {
       setLocaleState(newLocale);
       saveLocale(newLocale);
-
-      // Update document language attribute for accessibility
-      if (typeof document !== 'undefined') {
-        document.documentElement.lang = newLocale;
-      }
+      document.cookie = `sorotask_locale=${newLocale}; Path=/; Max-Age=31536000; SameSite=Lax`;
+      document.documentElement.lang = newLocale;
+      document.documentElement.dir = getTextDirection(newLocale);
+      router.refresh();
     }
-  }, []);
+  }, [router]);
+
+  useEffect(() => {
+    const storedLocale = getStoredLocalePreference();
+    if (storedLocale && storedLocale !== defaultLocale) setLocale(storedLocale);
+  }, [defaultLocale, setLocale]);
 
   return (
-    <LocaleContext.Provider value={{ locale, setLocale, isLoading }}>
+    <LocaleContext.Provider value={{ locale, setLocale, isLoading: false }}>
       {children}
     </LocaleContext.Provider>
   );

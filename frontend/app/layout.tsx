@@ -6,6 +6,9 @@ import { AIAssistantProvider } from "@/components/AIAssistant";
 import { ClientInit } from "./ClientInit";
 import { ErrorBoundary } from "@sentry/nextjs";
 import { ThemeProvider } from "next-themes";
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages } from "next-intl/server";
+import { getTextDirection } from "@/i18n";
 
 function GlobalErrorFallback({ error, resetError }: any) {
   return (
@@ -41,22 +44,26 @@ export const viewport: Viewport = {
 
 
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const [locale, messages] = await Promise.all([getLocale(), getMessages()]);
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang={locale} dir={getTextDirection(locale)} suppressHydrationWarning>
       <body className="antialiased">
-        <ErrorBoundary fallback={GlobalErrorFallback}>
-          <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
-            <AIAssistantProvider>
-              <AppProviders>
-                <CommandPalette />
-                {children}
-              </AppProviders>
-            </AIAssistantProvider>
-          </ThemeProvider>
-        </ErrorBoundary>
+        <NextIntlClientProvider locale={locale} messages={messages}>
+          <ErrorBoundary fallback={GlobalErrorFallback}>
+            <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
+              <AIAssistantProvider>
+                <AppProviders defaultLocale={locale}>
+                  <CommandPalette />
+                  {children}
+                </AppProviders>
+              </AIAssistantProvider>
+            </ThemeProvider>
+          </ErrorBoundary>
+        </NextIntlClientProvider>
         {/* Initialize Sentry and fetch instrumentation on client */}
         <ClientInit />
       </body>

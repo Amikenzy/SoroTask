@@ -8,48 +8,94 @@ import es from './translations/es.json';
 import fr from './translations/fr.json';
 import zh from './translations/zh.json';
 import de from './translations/de.json';
+import ja from './translations/ja.json';
+import ko from './translations/ko.json';
+import pt from './translations/pt.json';
+import ru from './translations/ru.json';
+import ar from './translations/ar.json';
+import hi from './translations/hi.json';
+import tr from './translations/tr.json';
 
-export type Locale = 'en' | 'es' | 'fr' | 'zh' | 'de';
+export const SUPPORTED_LOCALES = [
+  'en', 'es', 'zh', 'ja', 'ko', 'de', 'fr', 'pt', 'ru', 'ar', 'hi', 'tr',
+] as const;
 
-export const SUPPORTED_LOCALES: Locale[] = ['en', 'es', 'fr', 'zh', 'de'];
+export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 export const DEFAULT_LOCALE: Locale = 'en';
+export const RTL_LOCALES: Locale[] = ['ar'];
 
 // Translation catalog
-const translations: Record<Locale, typeof en> = {
+export const translations: Record<Locale, typeof en> = {
   en,
   es,
-  fr,
   zh,
+  ja,
+  ko,
   de,
+  fr,
+  pt,
+  ru,
+  ar,
+  hi,
+  tr,
 };
+
+const localeMetadata: Record<Locale, { name: string; nativeName: string; flag: string }> = {
+  en: { name: 'English', nativeName: 'English', flag: '🇺🇸' },
+  es: { name: 'Spanish', nativeName: 'Español', flag: '🇪🇸' },
+  zh: { name: 'Chinese', nativeName: '中文', flag: '🇨🇳' },
+  ja: { name: 'Japanese', nativeName: '日本語', flag: '🇯🇵' },
+  ko: { name: 'Korean', nativeName: '한국어', flag: '🇰🇷' },
+  de: { name: 'German', nativeName: 'Deutsch', flag: '🇩🇪' },
+  fr: { name: 'French', nativeName: 'Français', flag: '🇫🇷' },
+  pt: { name: 'Portuguese', nativeName: 'Português', flag: '🇧🇷' },
+  ru: { name: 'Russian', nativeName: 'Русский', flag: '🇷🇺' },
+  ar: { name: 'Arabic', nativeName: 'العربية', flag: '🇸🇦' },
+  hi: { name: 'Hindi', nativeName: 'हिन्दी', flag: '🇮🇳' },
+  tr: { name: 'Turkish', nativeName: 'Türkçe', flag: '🇹🇷' },
+};
+
+export function isLocale(value: string | undefined): value is Locale {
+  return SUPPORTED_LOCALES.some((locale) => locale === value);
+}
+
+export function getLocaleFromAcceptLanguage(acceptLanguage: string | null): Locale {
+  if (!acceptLanguage) return DEFAULT_LOCALE;
+
+  const preferences = acceptLanguage
+    .split(',')
+    .map((preference, index) => {
+      const [tag, quality] = preference.trim().split(';q=');
+      return {
+        locale: tag.split('-')[0].toLowerCase(),
+        quality: quality === undefined ? 1 : Number(quality),
+        index,
+      };
+    })
+    .filter(({ quality }) => Number.isFinite(quality) && quality > 0)
+    .sort((a, b) => b.quality - a.quality || a.index - b.index);
+
+  const preferredLocale = preferences.find(({ locale }) => isLocale(locale))?.locale;
+  return isLocale(preferredLocale) ? preferredLocale : DEFAULT_LOCALE;
+}
+
+export function getTextDirection(locale: Locale): 'ltr' | 'rtl' {
+  return RTL_LOCALES.includes(locale) ? 'rtl' : 'ltr';
+}
 
 /**
  * Get locale name in English
  */
 export function getLocaleName(locale: Locale): string {
-  const names: Record<Locale, string> = {
-    en: 'English',
-    es: 'Español (Spanish)',
-    fr: 'Français (French)',
-    zh: '中文 (Chinese)',
-    de: 'Deutsch (German)',
-  };
-  return names[locale];
+  return localeMetadata[locale].name;
 }
 
 /**
  * Get locale flag emoji
  */
 export function getLocaleFlag(locale: Locale): string {
-  const flags: Record<Locale, string> = {
-    en: '🇺🇸',
-    es: '🇪🇸',
-    fr: '🇫🇷',
-    zh: '🇨🇳',
-    de: '🇩🇪',
-  };
-  return flags[locale];
+  return localeMetadata[locale].flag;
 }
 
 /**
@@ -64,35 +110,31 @@ export function detectLocale(): Locale {
   const baseLocale = browserLocale.split('-')[0].toLowerCase();
 
   // Map common locale codes to supported locales
-  const localeMap: Record<string, Locale> = {
-    en: 'en',
-    es: 'es',
-    fr: 'fr',
-    zh: 'zh',
-    de: 'de',
-  };
-
-  return (localeMap[baseLocale] as Locale) || DEFAULT_LOCALE;
+  return isLocale(baseLocale) ? baseLocale : DEFAULT_LOCALE;
 }
 
 /**
  * Get locale from storage or default
  */
 export function getStoredLocale(): Locale {
+  return getStoredLocalePreference() ?? DEFAULT_LOCALE;
+}
+
+export function getStoredLocalePreference(): Locale | undefined {
   if (typeof window === 'undefined') {
-    return DEFAULT_LOCALE;
+    return undefined;
   }
 
   try {
     const stored = localStorage.getItem('sorotask_locale');
-    if (stored && SUPPORTED_LOCALES.includes(stored as Locale)) {
-      return stored as Locale;
+    if (isLocale(stored ?? undefined)) {
+      return stored;
     }
   } catch {
     // localStorage not available
   }
 
-  return DEFAULT_LOCALE;
+  return undefined;
 }
 
 /**
@@ -186,36 +228,8 @@ export function getAvailableLocales(): Array<{
   flag: string;
   nativeName: string;
 }> {
-  return [
-    {
-      code: 'en',
-      name: 'English',
-      flag: '🇺🇸',
-      nativeName: 'English',
-    },
-    {
-      code: 'es',
-      name: 'Spanish',
-      flag: '🇪🇸',
-      nativeName: 'Español',
-    },
-    {
-      code: 'fr',
-      name: 'French',
-      flag: '🇫🇷',
-      nativeName: 'Français',
-    },
-    {
-      code: 'zh',
-      name: 'Chinese',
-      flag: '🇨🇳',
-      nativeName: '中文',
-    },
-    {
-      code: 'de',
-      name: 'German',
-      flag: '🇩🇪',
-      nativeName: 'Deutsch',
-    },
-  ];
+  return SUPPORTED_LOCALES.map((code) => ({
+    code,
+    ...localeMetadata[code],
+  }));
 }

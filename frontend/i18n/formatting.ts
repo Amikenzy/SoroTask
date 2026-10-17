@@ -3,7 +3,22 @@
  * Handles locale-aware formatting of dates, times, numbers, and relative text
  */
 
-import type { Locale } from './index';
+import { RTL_LOCALES, type Locale } from './index';
+
+const localeTags: Record<Locale, string> = {
+  en: 'en-US',
+  es: 'es-ES',
+  zh: 'zh-CN',
+  ja: 'ja-JP',
+  ko: 'ko-KR',
+  de: 'de-DE',
+  fr: 'fr-FR',
+  pt: 'pt-BR',
+  ru: 'ru-RU',
+  ar: 'ar-SA',
+  hi: 'hi-IN',
+  tr: 'tr-TR',
+};
 
 /**
  * Format number for locale (handles thousand separators, decimal points)
@@ -18,16 +33,8 @@ export function formatNumber(
     currency?: string;
   }
 ): string {
-  const localeMap: Record<Locale, string> = {
-    en: 'en-US',
-    es: 'es-ES',
-    fr: 'fr-FR',
-    zh: 'zh-CN',
-    de: 'de-DE',
-  };
-
   try {
-    return new Intl.NumberFormat(localeMap[locale], {
+    return new Intl.NumberFormat(localeTags[locale], {
       minimumFractionDigits: options?.minimumFractionDigits ?? 0,
       maximumFractionDigits: options?.maximumFractionDigits ?? 2,
       style: options?.style ?? 'decimal',
@@ -57,27 +64,25 @@ export function formatInterval(
 ): { hours: number; display: string } {
   const hours = Math.round(intervalSeconds / 3600);
 
-  const localeMap: Record<Locale, string> = {
-    en: 'en-US',
-    es: 'es-ES',
-    fr: 'fr-FR',
-    zh: 'zh-CN',
-    de: 'de-DE',
-  };
-
-  const formatter = new Intl.NumberFormat(localeMap[locale]);
-
-  const formats: Record<Locale, string> = {
-    en: `${formatter.format(hours)}h (${formatter.format(intervalSeconds)} seconds)`,
-    es: `${formatter.format(hours)}h (${formatter.format(intervalSeconds)} segundos)`,
-    fr: `${formatter.format(hours)}h (${formatter.format(intervalSeconds)} secondes)`,
-    zh: `${formatter.format(hours)}小时(${formatter.format(intervalSeconds)}秒)`,
-    de: `${formatter.format(hours)}Std (${formatter.format(intervalSeconds)} Sekunden)`,
+  const formatter = new Intl.NumberFormat(localeTags[locale]);
+  const unitLabels: Record<Locale, { hours: string; seconds: string }> = {
+    en: { hours: 'h', seconds: 'seconds' },
+    es: { hours: 'h', seconds: 'segundos' },
+    zh: { hours: '小时', seconds: '秒' },
+    ja: { hours: '時間', seconds: '秒' },
+    ko: { hours: '시간', seconds: '초' },
+    de: { hours: 'Std', seconds: 'Sekunden' },
+    fr: { hours: 'h', seconds: 'secondes' },
+    pt: { hours: 'h', seconds: 'segundos' },
+    ru: { hours: 'ч', seconds: 'секунд' },
+    ar: { hours: 'س', seconds: 'ثانية' },
+    hi: { hours: 'घंटे', seconds: 'सेकंड' },
+    tr: { hours: 'sa', seconds: 'saniye' },
   };
 
   return {
     hours,
-    display: formats[locale],
+    display: `${formatter.format(hours)}${unitLabels[locale].hours} (${formatter.format(intervalSeconds)} ${unitLabels[locale].seconds})`,
   };
 }
 
@@ -95,16 +100,8 @@ export function formatRelativeTime(
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);
 
-  const localeMap: Record<Locale, string> = {
-    en: 'en-US',
-    es: 'es-ES',
-    fr: 'fr-FR',
-    zh: 'zh-CN',
-    de: 'de-DE',
-  };
-
   try {
-    const rtf = new Intl.RelativeTimeFormat(localeMap[locale], {
+    const rtf = new Intl.RelativeTimeFormat(localeTags[locale], {
       numeric: 'auto',
     });
 
@@ -124,7 +121,7 @@ export function formatRelativeTime(
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 30) return `${diffDays}d ago`;
-    return date.toLocaleDateString(localeMap[locale]);
+    return date.toLocaleDateString(localeTags[locale]);
   }
 }
 
@@ -145,16 +142,8 @@ export function formatDateTime(
     timeZone?: string;
   }
 ): string {
-  const localeMap: Record<Locale, string> = {
-    en: 'en-US',
-    es: 'es-ES',
-    fr: 'fr-FR',
-    zh: 'zh-CN',
-    de: 'de-DE',
-  };
-
   try {
-    const formatter = new Intl.DateTimeFormat(localeMap[locale], {
+    const formatter = new Intl.DateTimeFormat(localeTags[locale], {
       year: options?.year ?? 'numeric',
       month: options?.month ?? 'short',
       day: options?.day ?? 'numeric',
@@ -165,7 +154,7 @@ export function formatDateTime(
 
     return formatter.format(date);
   } catch {
-    return date.toLocaleDateString(localeMap[locale]);
+    return date.toLocaleDateString(localeTags[locale]);
   }
 }
 
@@ -173,9 +162,7 @@ export function formatDateTime(
  * Lis supported locales with their collation order for addressing
  */
 export function getTextDirection(locale: Locale): 'ltr' | 'rtl' {
-  // Add RTL locales here as needed
-  const rtlLocales: Locale[] = [];
-  return rtlLocales.includes(locale) ? 'rtl' : 'ltr';
+  return RTL_LOCALES.includes(locale) ? 'rtl' : 'ltr';
 }
 
 /**
@@ -196,11 +183,8 @@ export function getTextExpansionFactor(locale: Locale): number {
   // English -> German: +35%
   // English -> Chinese: -25% (Chinese is more compact)
   const factors: Record<Locale, number> = {
-    en: 1.0,
-    es: 1.25,
-    fr: 1.3,
-    zh: 0.75,
-    de: 1.35,
+    en: 1.0, es: 1.25, zh: 0.75, ja: 0.8, ko: 0.85, de: 1.35,
+    fr: 1.3, pt: 1.25, ru: 1.3, ar: 1.2, hi: 1.2, tr: 1.2,
   };
 
   return factors[locale];
@@ -219,9 +203,16 @@ export function getFontAdjustments(locale: Locale): {
   > = {
     en: { letterSpacing: 'normal', lineHeight: 1.5 },
     es: { letterSpacing: 'normal', lineHeight: 1.55 },
-    fr: { letterSpacing: 'normal', lineHeight: 1.55 },
     zh: { letterSpacing: '0.05em', lineHeight: 1.8 },
+    ja: { letterSpacing: 'normal', lineHeight: 1.8 },
+    ko: { letterSpacing: 'normal', lineHeight: 1.7 },
     de: { letterSpacing: 'normal', lineHeight: 1.6 },
+    fr: { letterSpacing: 'normal', lineHeight: 1.55 },
+    pt: { letterSpacing: 'normal', lineHeight: 1.55 },
+    ru: { letterSpacing: 'normal', lineHeight: 1.55 },
+    ar: { letterSpacing: 'normal', lineHeight: 1.8 },
+    hi: { letterSpacing: 'normal', lineHeight: 1.8 },
+    tr: { letterSpacing: 'normal', lineHeight: 1.55 },
   };
 
   return adjustments[locale];

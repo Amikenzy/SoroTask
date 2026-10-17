@@ -15,4 +15,5 @@ export type {
   ZkProofPipelineState,
   ZkEngineConfig,
   ZkVerificationResult,
+  ZkCircuitId,
 } from "./types";
