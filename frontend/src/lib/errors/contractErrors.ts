@@ -14,6 +14,7 @@ export type ContractErrorCategory =
   // Funds
   | "INSUFFICIENT_BALANCE"
   | "INSUFFICIENT_FEE"
+  | "TOKEN_APPROVAL_REQUIRED"
   // Transaction-level
   | "BAD_SEQUENCE"
   | "BAD_AUTH"
@@ -60,7 +61,37 @@ export interface MappedContractError {
     message: string;
     code?: string | number;
     raw?: unknown;
+    diagnostic?: DecodedContractDiagnostic;
   };
+}
+
+export interface DecodedContractDiagnostic {
+  format: "hex" | "base64" | "text";
+  decodedText: string;
+  code?: string;
+  domain?: string;
+  actionableMessage: string;
+}
+
+export class SorobanContractError extends Error {
+  readonly code?: string;
+  readonly resultXdr?: string;
+  readonly diagnosticPayload?: unknown;
+
+  constructor(
+    message: string,
+    details: {
+      code?: string;
+      resultXdr?: string;
+      diagnosticPayload?: unknown;
+    } = {},
+  ) {
+    super(message);
+    this.name = "SorobanContractError";
+    this.code = details.code;
+    this.resultXdr = details.resultXdr;
+    this.diagnosticPayload = details.diagnosticPayload;
+  }
 }
 
 // Codes the keeper already uses, lowercased for substring matching.
@@ -77,6 +108,7 @@ const KEEPER_CODE_TO_CATEGORY: Record<string, ContractErrorCategory> = {
   INVALID_ARGS: "INVALID_ARGS",
   INSUFFICIENT_GAS: "INSUFFICIENT_GAS",
   CONTRACT_PANIC: "CONTRACT_REVERT",
+  TX_FAILED: "CONTRACT_REVERT",
   INVALID_TRANSACTION: "INVALID_ARGS",
   TIMEOUT: "TIMEOUT",
   TIMEOUT_ERROR: "TIMEOUT",
@@ -84,6 +116,24 @@ const KEEPER_CODE_TO_CATEGORY: Record<string, ContractErrorCategory> = {
   RATE_LIMITED: "RATE_LIMITED",
   SERVER_ERROR: "SERVER_ERROR",
   SERVICE_UNAVAILABLE: "SERVER_ERROR",
+  RESOURCE_LIMIT_EXCEEDED: "INSUFFICIENT_GAS",
+  EXCEEDED_LIMIT: "INSUFFICIENT_GAS",
+  RESOURCE_LIMIT: "INSUFFICIENT_GAS",
+  TOO_MANY_REQUESTS: "RATE_LIMITED",
+  OP_NO_ACCOUNT: "INSUFFICIENT_BALANCE",
+  OP_LOW_RESERVE: "INSUFFICIENT_BALANCE",
+  OP_INSUFFICIENT_BALANCE: "INSUFFICIENT_BALANCE",
+  OP_INSUFFICIENT_FEE: "INSUFFICIENT_FEE",
+  OP_BAD_AUTH: "BAD_AUTH",
+  OP_BAD_AUTH_EXTRA: "BAD_AUTH",
+  OP_NO_TRUST: "WRONG_NETWORK",
+  OP_NO_ISSUER: "INVALID_ARGS",
+  OP_LINE_FULL: "INSUFFICIENT_BALANCE",
+  OP_UNDERFUNDED: "INSUFFICIENT_BALANCE",
+  INSUFFICIENT_ALLOWANCE: "TOKEN_APPROVAL_REQUIRED",
+  TOKEN_NOT_APPROVED: "TOKEN_APPROVAL_REQUIRED",
+  CONTRACT_ERROR: "CONTRACT_REVERT",
+  HOST_ERROR: "CONTRACT_REVERT",
   DUPLICATE_TRANSACTION: "DUPLICATE_TRANSACTION",
   TX_ALREADY_IN_LEDGER: "DUPLICATE_TRANSACTION",
   TX_DUPLICATE: "DUPLICATE_TRANSACTION",
@@ -134,6 +184,13 @@ const COPY: Record<
       "The transaction fee was below the network minimum. Try again — we'll bid a higher fee.",
     action: "retry",
     retryable: true,
+  },
+  TOKEN_APPROVAL_REQUIRED: {
+    title: "Token approval required",
+    userMessage:
+      "This contract cannot use the token yet. Review the token and spender addresses and approve only the amount required for this task.",
+    action: "fix_input",
+    retryable: false,
   },
   BAD_SEQUENCE: {
     title: "Sequence number out of date",
@@ -251,10 +308,16 @@ interface ErrorLike {
   resultXdr?: unknown;
   // Soroban simulate error payload
   error?: unknown;
+  errorResultXdr?: unknown;
+  diagnosticEvents?: unknown;
+  events?: unknown;
+  diagnosticPayload?: unknown;
+  result?: unknown;
+  details?: unknown;
 }
 
 function asString(v: unknown): string | undefined {
-  if (typeof v === "string") return v;
+  if (typeof v === "string") return v.trim() ? v : undefined;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return undefined;
 }
@@ -270,13 +333,172 @@ function extractMessage(err: ErrorLike): string {
   if (e) return e;
   const r = asString(err.resultXdr);
   if (r) return r;
+  const xdr = asString(err.errorResultXdr);
+  if (xdr) return xdr;
+  const diagnostic = asString(err.diagnosticPayload);
+  if (diagnostic) return diagnostic;
   return "Unknown error";
 }
 
+function collectDiagnosticText(value: unknown, seen = new Set<object>()): string[] {
+  if (typeof value === "string") return [value];
+  if (!value || typeof value !== "object" || seen.has(value)) return [];
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectDiagnosticText(item, seen));
+  }
+
+  const record = value as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const key of [
+    "message",
+    "error",
+    "errorCode",
+    "code",
+    "resultXdr",
+    "errorResultXdr",
+    "diagnosticPayload",
+    "diagnosticEvents",
+    "events",
+    "result",
+    "details",
+    "value",
+    "body",
+    "event",
+    "contractId",
+    "topics",
+    "data",
+    "type",
+  ]) {
+    if (record[key] !== undefined) {
+      parts.push(...collectDiagnosticText(record[key], seen));
+    }
+  }
+  return parts;
+}
+
+function cleanDecodedText(input: string): string | null {
+  const printable = input
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return printable || null;
+}
+
+function decodeHexText(input: string): string | null {
+  const stripped = input.trim().replace(/^0x/i, "").replace(/[\s:_-]/g, "");
+  if (
+    !stripped ||
+    stripped.length > 1_000_000 ||
+    stripped.length % 2 !== 0 ||
+    !/^[\da-f]+$/i.test(stripped)
+  ) {
+    return null;
+  }
+
+  const bytes = new Uint8Array(stripped.match(/.{2}/g)!.map((byte) => parseInt(byte, 16)));
+  const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  return cleanDecodedText(decoded);
+}
+
+function decodeBase64Text(input: string): string | null {
+  const stripped = input.trim();
+  if (
+    stripped.length < 8 ||
+    stripped.length > 1_000_000 ||
+    stripped.length % 4 !== 0 ||
+    !/^[\da-z+/]+={0,2}$/i.test(stripped)
+  ) {
+    return null;
+  }
+
+  try {
+    const bytes = Uint8Array.from(atob(stripped), (character) =>
+      character.charCodeAt(0),
+    );
+    return cleanDecodedText(new TextDecoder("utf-8", { fatal: false }).decode(bytes));
+  } catch {
+    return null;
+  }
+}
+
+export function decodeContractDiagnostic(
+  payload: unknown,
+): DecodedContractDiagnostic {
+  const sources = collectDiagnosticText(payload);
+  const candidates = sources.map((source) => {
+    const hexDecoded = decodeHexText(source);
+    return {
+      source,
+      decoded: hexDecoded ?? decodeBase64Text(source),
+      format: hexDecoded ? "hex" as const : "base64" as const,
+    };
+  });
+  const decodedCandidate = candidates.find((candidate) => candidate.decoded);
+  const source = decodedCandidate?.source ?? sources.join(" ").trim();
+  const decodedText = decodedCandidate?.decoded ?? source;
+  const format = decodedCandidate?.format ?? "text";
+  const hostError = decodedText.match(
+    /Error\s*\(\s*([A-Za-z_]+)\s*,\s*(#?\s*\d+|[A-Za-z_][A-Za-z0-9_]*)\s*\)/i,
+  );
+  const codeMatch =
+    decodedText.match(/\b(?:error|contracterror|code)\s*[:=#]\s*([A-Z][A-Z0-9_]{2,})\b/i) ??
+    decodedText.match(/\b(TX_[A-Z0-9_]+|OP_[A-Z0-9_]+|INSUFFICIENT_GAS|CONTRACT_PANIC)\b/i);
+  const code = hostError
+    ? `Error(${hostError[1]}, ${hostError[2].trim()})`
+    : codeMatch?.[1]?.toUpperCase();
+  const domain = hostError?.[1];
+
+  let actionableMessage =
+    "The diagnostic data was decoded, but it does not match a known Soroban error. Check the contract inputs and share the diagnostic code with support.";
+  if (hostError) {
+    const hostDomain = hostError[1].toLowerCase();
+    if (hostDomain === "budget" || hostDomain === "wasmvm") {
+      actionableMessage =
+        "Soroban could not complete the contract execution. Review the gas budget and contract inputs.";
+    } else if (hostDomain === "storage") {
+      actionableMessage =
+        "Contract state could not be loaded. The required ledger entry may need to be restored before retrying.";
+    } else if (hostDomain === "auth") {
+      actionableMessage =
+        "The contract call requires authorization that was not provided. Reconnect the wallet and review the requested signature.";
+    } else if (hostDomain === "contract") {
+      actionableMessage = `The contract returned custom error ${hostError[2].trim()}. Check the function arguments and the contract's documented error codes.`;
+    } else {
+      actionableMessage = `Soroban reported a ${hostError[1]} host error. Review the contract inputs and retry after addressing the reported condition.`;
+    }
+  } else if (code) {
+    const category = KEEPER_CODE_TO_CATEGORY[code];
+    actionableMessage = category
+      ? COPY[category].userMessage
+      : `Soroban returned error code ${code}. Check the contract inputs and the contract's documented error codes.`;
+  }
+
+  return {
+    format,
+    decodedText: decodedText.slice(0, 4000),
+    code,
+    domain,
+    actionableMessage,
+  };
+}
+
 function classify(err: ErrorLike): ContractErrorCategory {
-  const code = extractCode(err);
+  const diagnosticSources = collectDiagnosticText(err);
+  const decodedDiagnostic = diagnosticSources
+    .map((source) => decodeContractDiagnostic(source))
+    .find((diagnostic) => diagnostic.code);
+  const diagnosticText = [
+    ...diagnosticSources,
+    ...(decodedDiagnostic ? [decodedDiagnostic.decodedText] : []),
+  ].join(" ");
+  const code =
+    extractCode(err) ??
+    decodedDiagnostic?.code ??
+    decodeContractDiagnostic(diagnosticText).code;
   const codeUpper = code?.toUpperCase();
-  const message = extractMessage(err).toLowerCase();
+  const message = `${extractMessage(err)} ${diagnosticText}`.toLowerCase();
   const name = asString(err.name)?.toLowerCase() ?? "";
 
   // 1) Direct keeper-style code match
@@ -320,6 +542,18 @@ function classify(err: ErrorLike): ContractErrorCategory {
   }
 
   // 3) Soroban host / state errors
+  const hostError = message.match(
+    /error\s*\(\s*([a-z_]+)\s*,\s*(?:#?\s*\d+|[a-z_][a-z0-9_]*)\s*\)/i,
+  );
+  if (hostError) {
+    const hostDomain = hostError[1].toLowerCase();
+    if (hostDomain === "budget" || hostDomain === "wasmvm") {
+      return "INSUFFICIENT_GAS";
+    }
+    if (hostDomain === "storage") return "STATE_EXPIRED";
+    if (hostDomain === "auth") return "BAD_AUTH";
+    if (hostDomain === "contract") return "CONTRACT_REVERT";
+  }
   if (
     message.includes("entry expired") ||
     message.includes("state archived") ||
@@ -356,6 +590,14 @@ function classify(err: ErrorLike): ContractErrorCategory {
     message.includes("insufficient balance")
   ) {
     return "INSUFFICIENT_BALANCE";
+  }
+  if (
+    message.includes("insufficient allowance") ||
+    message.includes("allowance too low") ||
+    message.includes("token not approved") ||
+    message.includes("approval required")
+  ) {
+    return "TOKEN_APPROVAL_REQUIRED";
   }
   if (
     message.includes("tx_insufficient_fee") ||
@@ -413,17 +655,29 @@ export function mapContractError(input: unknown): MappedContractError {
     input && typeof input === "object" ? (input as ErrorLike) : {};
   const category = classify(err);
   const copy = COPY[category];
+  const diagnosticPayload =
+    err.diagnosticPayload ??
+    err.diagnosticEvents ??
+    err.errorResultXdr ??
+    err.resultXdr;
+  const diagnostic = diagnosticPayload === undefined
+    ? null
+    : decodeContractDiagnostic(diagnosticPayload);
   return {
     category,
     title: copy.title,
-    userMessage: copy.userMessage,
+    userMessage:
+      diagnostic && diagnostic.code
+        ? diagnostic.actionableMessage
+        : copy.userMessage,
     action: copy.action,
     retryable: copy.retryable,
     debug: {
       name: asString(err.name),
       message: extractMessage(err),
-      code: extractCode(err),
+      code: extractCode(err) ?? diagnostic?.code,
       raw: input,
+      diagnostic: diagnostic ?? undefined,
     },
   };
 }

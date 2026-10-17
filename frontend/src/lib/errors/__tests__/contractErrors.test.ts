@@ -1,5 +1,6 @@
 import {
   ALL_CONTRACT_ERROR_CATEGORIES,
+  decodeContractDiagnostic,
   isContractErrorCategory,
   mapContractError,
 } from "../contractErrors";
@@ -22,6 +23,14 @@ describe("mapContractError", () => {
     expect(result.debug.message).toBe("boom");
     expect(result.debug.code).toBe("TX_BAD_SEQ");
     expect(result.debug.raw).toBe(raw);
+  });
+
+  it("maps named Soroban host error types without numeric codes", () => {
+    expect(
+      mapContractError(
+        new Error("HostError: Error(Budget, CpuLimitExceeded)"),
+      ).category,
+    ).toBe("INSUFFICIENT_GAS");
   });
 
   it("handles null and primitive inputs without throwing", () => {
@@ -49,6 +58,62 @@ describe("mapContractError", () => {
     expect(generic.category).toBe("SIMULATION_FAILED");
   });
 
+  it.each([
+    ["Contract", "CONTRACT_REVERT"],
+    ["Budget", "INSUFFICIENT_GAS"],
+    ["Storage", "STATE_EXPIRED"],
+    ["Auth", "BAD_AUTH"],
+  ] as const)("maps Soroban %s host errors to %s", (domain, category) => {
+    expect(
+      mapContractError(new Error(`HostError: Error(${domain}, #2)`)).category,
+    ).toBe(category);
+  });
+
+  it("decodes hex diagnostic text and translates a custom contract error code", () => {
+    const diagnostic = "HostError: Error(Contract, #2)";
+    const hex = `0x${Array.from(new TextEncoder().encode(diagnostic), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("")}`;
+
+    const decoded = decodeContractDiagnostic(hex);
+
+    expect(decoded.format).toBe("hex");
+    expect(decoded.decodedText).toBe(diagnostic);
+    expect(decoded.code).toBe("Error(Contract, #2)");
+    expect(decoded.actionableMessage).toContain("custom error #2");
+    expect(
+      mapContractError({ message: "simulation failed", diagnosticPayload: hex })
+        .category,
+    ).toBe("CONTRACT_REVERT");
+  });
+
+  it("decodes base64 XDR text carried by Soroban error-result fields", () => {
+    const diagnostic = "HostError: Error(Budget, #3)";
+    const encoded = btoa(
+      Array.from(new TextEncoder().encode(diagnostic), (byte) =>
+        String.fromCharCode(byte),
+      ).join(""),
+    );
+    const mapped = mapContractError({
+      message: "Simulation failed",
+      errorResultXdr: encoded,
+    });
+
+    expect(mapped.category).toBe("INSUFFICIENT_GAS");
+    expect(mapped.userMessage).toContain("gas budget");
+    expect(decodeContractDiagnostic(encoded).format).toBe("base64");
+  });
+
+  it("decodes diagnostic fields nested in Soroban RPC error responses", () => {
+    const mapped = mapContractError({
+      message: "Simulation failed",
+      errorResultXdr: "HostError: Error(Budget, #1)",
+    });
+
+    expect(mapped.category).toBe("INSUFFICIENT_GAS");
+    expect(mapped.userMessage).toContain("gas budget");
+  });
+
   it("classifies HTTP 5xx status codes as SERVER_ERROR", () => {
     expect(
       mapContractError({ message: "boom", status: 502 }).category,
@@ -56,6 +121,16 @@ describe("mapContractError", () => {
     expect(
       mapContractError({ message: "boom", status: "503" }).category,
     ).toBe("SERVER_ERROR");
+  });
+
+  it("recognises token allowance failures as a token approval requirement", () => {
+    expect(
+      mapContractError(
+        Object.assign(new Error("allowance too low"), {
+          code: "INSUFFICIENT_ALLOWANCE",
+        }),
+      ).category,
+    ).toBe("TOKEN_APPROVAL_REQUIRED");
   });
 
   it("uses the keeper-style code map when both code and message disagree", () => {

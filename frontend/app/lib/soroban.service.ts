@@ -8,6 +8,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { signTransaction } from "@stellar/freighter-api";
 import { EXPECTED_NETWORK_PASSPHRASE } from "./wallet";
+import { SorobanContractError } from "@/src/lib/errors/contractErrors";
 
 export class SorobanService {
   private rpcServer: rpc.Server;
@@ -33,12 +34,55 @@ export class SorobanService {
   ): Promise<any> {
     const simulation = await this.rpcServer.simulateTransaction(tx);
     if (!rpc.Api.isSimulationSuccess(simulation)) {
-      throw new Error(
-        "Simulation failed: " +
-          ((simulation as any).errorResultXdr || (simulation as any).error || "Unknown simulation error")
-      );
+      const failedSimulation = simulation as {
+        error?: unknown;
+        errorResultXdr?: unknown;
+        diagnosticEvents?: unknown;
+        resultXdr?: unknown;
+      };
+      const message =
+        typeof failedSimulation.error === "string"
+          ? failedSimulation.error
+          : "Soroban transaction simulation failed";
+      throw new SorobanContractError(`Simulation failed: ${message}`, {
+        resultXdr:
+          typeof failedSimulation.errorResultXdr === "string"
+            ? failedSimulation.errorResultXdr
+            : typeof failedSimulation.resultXdr === "string"
+              ? failedSimulation.resultXdr
+              : undefined,
+        diagnosticPayload:
+          failedSimulation.diagnosticEvents ??
+          failedSimulation.errorResultXdr ??
+          failedSimulation.error,
+      });
     }
     return rpc.assembleTransaction(tx, simulation).build();
+  }
+
+  async prepareContractCall({
+    publicKey,
+    contractId,
+    method,
+    args = [],
+    networkPassphrase = EXPECTED_NETWORK_PASSPHRASE,
+  }: {
+    publicKey: string;
+    contractId: string;
+    method: string;
+    args?: xdr.ScVal[];
+    networkPassphrase?: string;
+  }) {
+    const account = await this.getAccount(publicKey);
+    const transaction = new TransactionBuilder(account, {
+      fee: "10000",
+      networkPassphrase,
+    })
+      .addOperation(new Contract(contractId).call(method, ...args))
+      .setTimeout(30)
+      .build();
+
+    return this.simulateAndPrepare(transaction, networkPassphrase);
   }
 
   /**
@@ -59,22 +103,14 @@ export class SorobanService {
     timeoutMs?: number;
     networkPassphrase?: string;
   }): Promise<rpc.Api.GetSuccessfulTransactionResponse> {
-    // 1. Load real account sequence
-    const account = await this.getAccount(publicKey);
-    
-    const contract = new Contract(contractId);
-    
-    // 2. Build preliminary transaction
-    const tx = new TransactionBuilder(account, {
-      fee: "10000",
+    // 1. Build, simulate, and prepare the contract call
+    const preparedTx = await this.prepareContractCall({
+      publicKey,
+      contractId,
+      method,
+      args,
       networkPassphrase,
-    })
-      .addOperation(contract.call(method, ...args))
-      .setTimeout(30)
-      .build();
-
-    // 3. Simulate and prepare footprint
-    const preparedTx = await this.simulateAndPrepare(tx, networkPassphrase);
+    });
 
     // 4. Sign through Freighter
     const signedTxXdr = await signTransaction(preparedTx.toXDR(), { networkPassphrase });
@@ -90,7 +126,27 @@ export class SorobanService {
     // 5. Submit
     const sendResponse = await this.rpcServer.sendTransaction(signedTx);
     if (sendResponse.status === "ERROR") {
-      throw new Error(`Transaction submission failed: ${(sendResponse as any).errorResultXdr || (sendResponse as any).errorResult}`);
+      const failedSubmission = sendResponse as {
+        errorResultXdr?: unknown;
+        errorResult?: unknown;
+      };
+      const resultXdr =
+        typeof failedSubmission.errorResultXdr === "string"
+          ? failedSubmission.errorResultXdr
+          : undefined;
+      throw new SorobanContractError(
+        `Transaction submission failed: ${
+          resultXdr ??
+          (typeof failedSubmission.errorResult === "string"
+            ? failedSubmission.errorResult
+            : "unknown Soroban submission error")
+        }`,
+        {
+          resultXdr,
+          diagnosticPayload:
+            failedSubmission.errorResultXdr ?? failedSubmission.errorResult,
+        },
+      );
     }
 
     // 6. Poll with timeout handling
@@ -103,8 +159,12 @@ export class SorobanService {
       }
       
       if (statusResponse.status === rpc.Api.GetTransactionStatus.FAILED) {
-        throw new Error(
-          `Transaction failed on-chain: ${statusResponse.resultXdr}`
+        throw new SorobanContractError(
+          `Transaction failed on-chain: ${statusResponse.resultXdr}`,
+          {
+            resultXdr: statusResponse.resultXdr,
+            diagnosticPayload: statusResponse.resultXdr,
+          },
         );
       }
       

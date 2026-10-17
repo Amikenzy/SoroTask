@@ -5,6 +5,12 @@
 
 import { useState, useCallback } from "react";
 import { SorobanService } from "@/app/lib/soroban.service";
+import {
+  mapContractError,
+  type MappedContractError,
+} from "@/src/lib/errors/contractErrors";
+import { EXPECTED_NETWORK_PASSPHRASE } from "@/app/lib/wallet";
+import type { xdr } from "@stellar/stellar-sdk";
 
 export interface ItemizedFeeBreakdown {
   networkBaseFeeXlm: number;
@@ -19,6 +25,8 @@ export interface SimulationResult {
   itemizedFees: ItemizedFeeBreakdown;
   transactionXdr?: string;
   errorMessage?: string;
+  mappedError?: MappedContractError;
+  diagnosticPayload?: unknown;
   warningMessage?: string;
   minFeeStroops?: string;
 }
@@ -27,6 +35,7 @@ export interface SimulateTxInput {
   contractId: string;
   method: string;
   publicKey?: string;
+  args?: xdr.ScVal[];
   bountyXlm?: number;
   rpcUrl?: string;
 }
@@ -50,8 +59,13 @@ export function useTransactionSimulation(defaultRpcUrl?: string) {
         const pubKey =
           input.publicKey || "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
-        // Perform simulation
-        await service.getAccount(pubKey).catch(() => null);
+        const preparedTransaction = await service.prepareContractCall({
+          publicKey: pubKey,
+          contractId: input.contractId,
+          method: input.method,
+          args: input.args,
+          networkPassphrase: EXPECTED_NETWORK_PASSPHRASE,
+        });
 
         // Calculate simulated resource metrics
         const estimatedResourceFee = 0.0025; // CPU/Memory estimated cost in XLM
@@ -69,16 +83,19 @@ export function useTransactionSimulation(defaultRpcUrl?: string) {
             storageDepositXlm: estimatedStorageDeposit,
             totalXlm,
           },
+          transactionXdr: preparedTransaction.toXDR(),
           minFeeStroops: "26000",
         };
 
         setSimulationResult(result);
         return result;
       } catch (err) {
-        const errorMessage =
-          err instanceof Error
-            ? err.message
-            : "Simulation failed due to unexpected contract error.";
+        const mappedError = mapContractError(err);
+        const diagnosticPayload =
+          err && typeof err === "object" && "diagnosticPayload" in err
+            ? err.diagnosticPayload
+            : undefined;
+        const errorMessage = mappedError.userMessage;
 
         const failedResult: SimulationResult = {
           success: false,
@@ -89,10 +106,12 @@ export function useTransactionSimulation(defaultRpcUrl?: string) {
             storageDepositXlm: 0,
             totalXlm: baseFeeXlm + bountyXlm,
           },
-          errorMessage: `Pre-Flight Simulation Failed: ${errorMessage}. The transaction will likely revert on-chain.`,
+          errorMessage,
+          mappedError,
+          diagnosticPayload,
         };
 
-        setError(errorMessage);
+        setError(`${mappedError.title}: ${errorMessage}`);
         setSimulationResult(failedResult);
         return failedResult;
       } finally {

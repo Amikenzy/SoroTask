@@ -5,7 +5,7 @@ import { AppProviders } from "@/app/components/AppProviders";
 import { AIAssistantProvider } from "@/components/AIAssistant";
 import { ClientInit } from "./ClientInit";
 import { ErrorBoundary } from "@sentry/nextjs";
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider } from "./theme/ThemeProvider";
 
 function GlobalErrorFallback({ error, resetError }: any) {
   return (
@@ -36,7 +36,6 @@ export const viewport: Viewport = {
   themeColor: "#0f172a",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
 };
 
 
@@ -48,7 +47,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
         <ErrorBoundary fallback={GlobalErrorFallback}>
-          <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
+          <ThemeProvider>
             <AIAssistantProvider>
               <AppProviders>
                 <CommandPalette />

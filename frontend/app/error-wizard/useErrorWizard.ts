@@ -1,7 +1,10 @@
 'use client';
 
 import { useReducer, useCallback } from 'react';
-import { mapContractError } from '@/src/lib/errors/contractErrors';
+import {
+  decodeContractDiagnostic,
+  mapContractError,
+} from '@/src/lib/errors/contractErrors';
 import type { FailureLog, WizardStep, WizardState, ResolutionAction } from './types';
 
 // ---------------------------------------------------------------------------
@@ -19,7 +22,11 @@ export function generateSteps(logs: FailureLog[]): WizardStep[] {
     const mapped = mapContractError({
       message: log.errorMessage,
       code: log.errorCode,
+      diagnosticPayload: log.diagnosticPayload,
     });
+    const diagnostic = log.diagnosticPayload === undefined
+      ? undefined
+      : decodeContractDiagnostic(log.diagnosticPayload);
 
     if (seen.has(mapped.category)) continue;
     seen.add(mapped.category);
@@ -32,6 +39,7 @@ export function generateSteps(logs: FailureLog[]): WizardStep[] {
       category: mapped.category,
       title: mapped.title,
       explanation: mapped.userMessage,
+      diagnostic,
       actions,
       status: 'pending',
     });
@@ -53,7 +61,7 @@ function buildActions(
         type: 'increase_gas',
         label: 'Increase gas budget',
         description: `Set gas budget to ${suggested} (1.5× current).`,
-        patch: { field: 'gasBalance', value: suggested },
+        patch: { field: 'gasBudget', value: suggested },
       }];
     }
     case 'INSUFFICIENT_BALANCE':
@@ -62,12 +70,21 @@ function buildActions(
         label: 'Top up account balance',
         description: 'Add XLM to your account before the next execution.',
       }];
+    case 'TOKEN_APPROVAL_REQUIRED':
+      return [{
+        type: 'approve_token',
+        label: 'Review token approval',
+        description: [
+          ctx.tokenAddress ? `Token: ${ctx.tokenAddress}.` : '',
+          ctx.spenderAddress ? `Spender: ${ctx.spenderAddress}.` : '',
+          'Verify both addresses and approve only the required amount in your wallet.',
+        ].filter(Boolean).join(' '),
+      }];
     case 'INSUFFICIENT_FEE':
       return [{
         type: 'increase_gas',
         label: 'Raise transaction fee',
-        description: 'The fee was below the network minimum. Increase gas balance.',
-        patch: { field: 'gasBalance', value: 10 },
+        description: 'Rebuild the transaction so the fee can be recalculated using the latest network minimum.',
       }];
     case 'BAD_AUTH':
     case 'WALLET_LOCKED':
