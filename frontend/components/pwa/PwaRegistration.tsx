@@ -20,19 +20,24 @@ export function PwaRegistration() {
       window.matchMedia("(display-mode: standalone)").matches ||
         ("standalone" in navigator && navigator.standalone === true),
     );
-    if (!("serviceWorker" in navigator)) return;
-
+    const wantsServiceWorker =
+      process.env.NEXT_PUBLIC_DISABLE_SW !== "true" &&
+      "serviceWorker" in navigator &&
+      (process.env.NODE_ENV === "production" ||
+        process.env.NEXT_PUBLIC_ENABLE_SW_IN_DEV === "true");
     let mounted = true;
-    navigator.serviceWorker
-      .register("/sw.js", { scope: "/" })
-      .then(() => navigator.serviceWorker.ready)
-      .then(() => {
-        if (mounted) setServiceWorkerReady(true);
-      })
-      .catch((error: unknown) => {
-        console.error("Failed to register SoroTask service worker.", error);
-        if (mounted) setNotice("Offline support could not be enabled in this browser.");
-      });
+    if (wantsServiceWorker) {
+      navigator.serviceWorker
+        .register("/sw.js", { scope: "/" })
+        .then(() => navigator.serviceWorker.ready)
+        .then(() => {
+          if (mounted) setServiceWorkerReady(true);
+        })
+        .catch((error: unknown) => {
+          console.error("Failed to register SoroTask service worker.", error);
+          if (mounted) setNotice("Offline support could not be enabled in this browser.");
+        });
+    }
 
     const handleInstallPrompt = (event: Event) => {
       event.preventDefault();
@@ -43,26 +48,42 @@ export function PwaRegistration() {
       setInstallPrompt(null);
       setNotice("SoroTask was added to your device.");
     };
-    const handleMessage = (event: MessageEvent<{ type?: string }>) => {
+    const handleMessage = (
+      event: MessageEvent<{ type?: string; status?: number }>,
+    ) => {
       if (event.data?.type === "BACKGROUND_REQUEST_FAILED") {
-        setNotice("An offline change could not be synchronized. Please review it in the app.");
+        setNotice(
+          `An offline change could not be synchronized (HTTP ${event.data.status ?? "error"}). Review it in the app.`,
+        );
+      } else if (event.data?.type === "BACKGROUND_REQUEST_COMPLETED") {
+        setNotice("An offline change was synchronized.");
       }
     };
     const handleOnline = () => {
-      navigator.serviceWorker.controller?.postMessage({ type: "FLUSH_BACKGROUND_REQUESTS" });
+      if (!("serviceWorker" in navigator)) return;
+      void navigator.serviceWorker.ready
+        .then((registration) => {
+          registration.active?.postMessage({ type: "FLUSH_BACKGROUND_REQUESTS" });
+        })
+        .catch((error: unknown) => {
+          console.error("Failed to retry queued offline changes.", error);
+        });
     };
-
     window.addEventListener("beforeinstallprompt", handleInstallPrompt);
     window.addEventListener("appinstalled", handleInstalled);
-    navigator.serviceWorker.addEventListener("message", handleMessage);
-    window.addEventListener("online", handleOnline);
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("message", handleMessage);
+      window.addEventListener("online", handleOnline);
+    }
 
     return () => {
       mounted = false;
       window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
       window.removeEventListener("appinstalled", handleInstalled);
-      navigator.serviceWorker.removeEventListener("message", handleMessage);
-      window.removeEventListener("online", handleOnline);
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.removeEventListener("message", handleMessage);
+        window.removeEventListener("online", handleOnline);
+      }
     };
   }, []);
 

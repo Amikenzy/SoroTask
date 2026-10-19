@@ -1,73 +1,175 @@
+/**
+ * Admin Dashboard Page
+ * Protected page for administrative functions
+ */
+
 "use client";
 
+import React, { useState } from "react";
 import Link from "next/link";
 import { withRouteGuard } from "@/lib/routeGuards";
 import { useAuth } from "@/context/AuthContext";
+import { useTranslation } from "@/hooks/useI18n";
+import {
+  UpgradeModal,
+  DEFAULT_PROPOSAL,
+  type UpgradeProposal,
+} from "@/src/components/UpgradeModal";
+import { StorageInspector } from "@/src/components/StorageInspector";
 
 function AdminPage() {
   const { user } = useAuth();
+  const { t } = useTranslation();
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [activeProposal, setActiveProposal] =
+    useState<UpgradeProposal>(DEFAULT_PROPOSAL);
 
   return (
-    <main className="min-h-screen bg-neutral-950 px-4 py-10 text-neutral-100 sm:px-6">
-      <div className="mx-auto max-w-5xl">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">Administration</p>
-        <h1 className="mt-2 text-3xl font-bold">Admin dashboard</h1>
-        <p className="mt-2 text-neutral-400">
-          Review access controls and manage protocol permissions.
-        </p>
+    <div className="container mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-3xl font-bold text-neutral-900 mb-8">
+          {t("admin.title", { defaultValue: "Admin Dashboard" })}
+        </h1>
 
-        <section className="mt-8 grid gap-5 md:grid-cols-[1.5fr_1fr]">
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold">RBAC administration</h2>
-                <p className="mt-2 max-w-xl text-sm leading-relaxed text-neutral-400">
-                  Inspect protocol roles, edit granular permission bitmasks, grant or revoke access,
-                  manage expiring delegation tickets, and review the role-change timeline.
-                </p>
-              </div>
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200">
-                Preview mode
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* User Management Card */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-xl font-semibold text-neutral-800 mb-4">
+              {t("admin.users.title", { defaultValue: "User Management" })}
+            </h2>
+            <p className="text-neutral-600 mb-4">
+              {t("admin.users.description", {
+                defaultValue: "Manage user accounts and permissions",
+              })}
+            </p>
+            <button className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors">
+              {t("admin.users.manage", { defaultValue: "Manage Users" })}
+            </button>
+          </div>
+
+          {/* System Settings Card */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-xl font-semibold text-neutral-800 mb-4">
+              {t("admin.settings.title", { defaultValue: "System Settings" })}
+            </h2>
+            <p className="text-neutral-600 mb-4">
+              {t("admin.settings.description", {
+                defaultValue: "Configure system-wide settings",
+              })}
+            </p>
+            <button className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors">
+              {t("admin.settings.configure", { defaultValue: "Configure" })}
+            </button>
+          </div>
+
+          {/* System Health Card */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-xl font-semibold text-neutral-800 mb-4">
+              {t("admin.system.title", { defaultValue: "System Health" })}
+            </h2>
+            <p className="text-neutral-600 mb-4">
+              {t("admin.system.description", {
+                defaultValue: "Monitor system performance and health",
+              })}
+            </p>
+            <button className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition-colors">
+              {t("admin.system.monitor", { defaultValue: "Monitor" })}
+            </button>
+          </div>
+
+          {/* Contract Governance & Upgrades Card */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-neutral-800">
+                {t("admin.governance.title", {
+                  defaultValue: "Contract Upgrades",
+                })}
+              </h2>
+              <span className="text-xs bg-purple-100 text-purple-700 font-semibold px-2 py-0.5 rounded">
+                Active Vote
               </span>
             </div>
+            <p className="text-neutral-600 mb-4 text-sm">
+              Review proposed WASM hashes, bytecode diffs, independent audit
+              reports, and cast timelock governance votes.
+            </p>
+            <button
+              onClick={() => setIsUpgradeModalOpen(true)}
+              className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors text-sm font-medium"
+            >
+              Review Upgrade & Vote
+            </button>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="mb-4 text-xl font-semibold text-neutral-800">
+              Role-based access
+            </h2>
+            <p className="mb-4 text-sm text-neutral-600">
+              Review protocol roles, delegation requests, permissions, and the
+              role-change audit timeline.
+            </p>
             <Link
               href="/settings/rbac"
-              className="mt-6 inline-flex items-center rounded-lg bg-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-400"
+              className="inline-block rounded bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700"
             >
-              Open RBAC dashboard <span aria-hidden="true" className="ml-2">→</span>
+              Manage roles
             </Link>
           </div>
+        </div>
 
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
-            <h2 className="text-lg font-semibold">Signed-in administrator</h2>
-            <dl className="mt-4 space-y-3 text-sm">
-              <div>
-                <dt className="text-neutral-500">Name</dt>
-                <dd className="mt-0.5 text-neutral-200">{user?.name || "Unknown"}</dd>
-              </div>
-              <div>
-                <dt className="text-neutral-500">Address</dt>
-                <dd className="mt-0.5 break-all font-mono text-xs text-neutral-300">{user?.address || "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-neutral-500">Granted admin permissions</dt>
-                <dd className="mt-0.5 text-neutral-200">
-                  {user?.permissions.filter((permission) => permission.startsWith("admin:")).join(", ") || "None"}
-                </dd>
-              </div>
-            </dl>
+        {/* Contract Storage Inspector */}
+        <div className="mt-8">
+          <StorageInspector />
+        </div>
+
+        {/* Upgrade Governance Modal */}
+        <UpgradeModal
+          isOpen={isUpgradeModalOpen}
+          proposal={activeProposal}
+          onClose={() => setIsUpgradeModalOpen(false)}
+        />
+
+        {/* Current User Info */}
+        <div className="mt-8 bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-semibold text-neutral-800 mb-4">
+            {t("admin.current_user", { defaultValue: "Current User" })}
+          </h2>
+          <div className="space-y-2">
+            <p>
+              <strong>{t("admin.user.name", { defaultValue: "Name" })}:</strong>{" "}
+              {user?.name}
+            </p>
+            <p>
+              <strong>
+                {t("admin.user.address", { defaultValue: "Address" })}:
+              </strong>{" "}
+              {user?.address}
+            </p>
+            <p>
+              <strong>{t("admin.user.role", { defaultValue: "Role" })}:</strong>{" "}
+              {user?.role}
+            </p>
+            <p>
+              <strong>
+                {t("admin.user.permissions", { defaultValue: "Permissions" })}:
+              </strong>
+            </p>
+            <ul className="list-disc list-inside ml-4">
+              {user?.permissions.map((permission) => (
+                <li key={permission} className="text-sm text-neutral-600">
+                  {permission}
+                </li>
+              ))}
+            </ul>
           </div>
-        </section>
-
-        <p className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-xs leading-relaxed text-neutral-400">
-          RBAC contract and API integration are not configured in this repository. Dashboard changes are an
-          interactive preview and are not submitted to the Stellar network.
-        </p>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }
 
 export default withRouteGuard(AdminPage, ["admin:users"], {
   redirectTo: "/unauthorized",
+  requireAll: false, // User needs any admin permission
 });

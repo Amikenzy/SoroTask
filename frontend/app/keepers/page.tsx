@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { WalletProvider, useWallet } from "@/app/context/WalletContext";
+import { useWallet } from "@/app/context/WalletContext";
 import { WalletButton } from "@/app/components/WalletButton";
 import { KeeperTable, type KeeperRecord } from "@/src/components/KeeperTable";
 
@@ -169,9 +169,5 @@ function KeeperLeaderboard() {
 }
 
 export default function KeepersPage() {
-  return (
-    <WalletProvider>
-      <KeeperLeaderboard />
-    </WalletProvider>
-  );
+  return <KeeperLeaderboard />;
 }
