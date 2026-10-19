@@ -23,7 +23,7 @@ const ALLOWED_ATTR = ["href", "target", "rel", "class"];
  * - Strips all attributes not in the allowlist
  * - Forces external links to open safely (rel="noopener noreferrer")
  *
- * Safe to call in SSR (returns input unchanged when window is unavailable).
+ * Safe to call in SSR (returns an empty string when window is unavailable).
  */
 export function sanitizeHtml(dirty: string): string {
   if (typeof window === "undefined") {
@@ -48,14 +48,14 @@ export function sanitizeHtml(dirty: string): string {
  */
 export function addSafeLinkAttributes(html: string): string {
   return html.replace(
-    /<a\s([^>]*href="[^"]*"[^>]*)>/gi,
+    /<a\s([^>]*)>/gi,
     (match, attrs: string) => {
-      const hasRel = /rel=/i.test(attrs);
-      const hasTarget = /target=/i.test(attrs);
-      let result = attrs;
-      if (!hasTarget) result += ' target="_blank"';
-      if (!hasRel) result += ' rel="noopener noreferrer"';
-      return `<a ${result}>`;
-    }
+      if (!/\bhref\s*=/i.test(attrs)) return match;
+      const safeAttrs = attrs.replace(
+        /\s(?:target|rel)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+        "",
+      );
+      return `<a${safeAttrs} target="_blank" rel="noopener noreferrer">`;
+    },
   );
 }
