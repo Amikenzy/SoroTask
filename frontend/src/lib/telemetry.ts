@@ -15,6 +15,8 @@ export interface DiagnosticReport {
   consoleLogs: string[];
   networkErrors: Array<{ url: string; status: number; error: string; timestamp: number }>;
   ticketDestination?: "github" | "jira" | "api";
+  };
+  consoleLogs: string[];
 }
 
 export class Telemetry {
@@ -25,6 +27,8 @@ export class Telemetry {
   private constructor() {
     this.initHooks();
   }
+
+  private constructor() {}
 
   static getInstance(): Telemetry {
     if (!Telemetry.instance) {
@@ -134,6 +138,31 @@ export class Telemetry {
         ticketId: `LOCAL-${Date.now().toString(36).toUpperCase()}`,
       };
     }
+  async sendReport(report: DiagnosticReport): Promise<void> {
+    const redacted = this.redactSensitiveData(report);
+    await fetch("/api/telemetry/bug-report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(redacted),
+    });
+  }
+
+  private redactSensitiveData(report: DiagnosticReport): DiagnosticReport {
+    const serialized = JSON.stringify(report);
+    const redacted = serialized.replace(
+      /(private[_-]?key|seed|secret|mnemonic|password|token|api[_-]?key|authorization)/gi,
+      "[REDACTED]"
+    );
+    return JSON.parse(redacted) as DiagnosticReport;
+  }
+
+  captureConsoleSnapshot(maxLogs: number = 50): string[] {
+    // This is a placeholder - actual implementation would capture console history
+    return [];
+  }
+
+  captureNetworkErrors(): Array<{ url: string; status: number; error: string }> {
+    return [];
   }
 }
 

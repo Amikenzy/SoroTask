@@ -13,15 +13,12 @@
 export type HardwareWalletKind = "freighter" | "ledger" | "trezor";
 
 export type HardwareWalletStatus =
-  | "unsupported"
-  | "disconnected"
-  | "connected"
-  | "locked";
+  "unsupported" | "disconnected" | "connected" | "locked";
 
 export type HardwareWalletSession = {
   kind: HardwareWalletKind;
   address: string;
-  transport: "webusb" | "extension";
+  transport: "webusb" | "webhid" | "extension";
   device?: {
     productName?: string;
     serialNumber?: string;
@@ -47,7 +44,10 @@ type LedgerUsbDevice = {
   selectConfiguration: (configurationValue: number) => Promise<void>;
   claimInterface: (interfaceNumber: number) => Promise<void>;
   selectAlternateInterface?: (alternateInterface: number) => Promise<void>;
-  transferOut?: (endpointNumber: number, data: BufferSource) => Promise<unknown>;
+  transferOut?: (
+    endpointNumber: number,
+    data: BufferSource,
+  ) => Promise<unknown>;
   transferIn?: (
     endpointNumber: number,
     length: number,
@@ -55,7 +55,9 @@ type LedgerUsbDevice = {
 };
 
 type LedgerUsb = {
-  requestDevice: (options: { filters: Array<{ vendorId: number }> }) => Promise<LedgerUsbDevice>;
+  requestDevice: (options: {
+    filters: Array<{ vendorId: number }>;
+  }) => Promise<LedgerUsbDevice>;
 };
 
 type WebUsbNavigator = Navigator & {
@@ -84,17 +86,28 @@ function getWebUsb(): LedgerUsb | undefined {
   return (navigator as WebUsbNavigator).usb;
 }
 
+function getWebHid(): any {
+  if (typeof navigator === "undefined") return undefined;
+  return (navigator as any).hid;
+}
+
 export async function isLedgerWebUsbSupported(): Promise<boolean> {
   return Boolean(getWebUsb());
 }
 
+export async function isLedgerWebHidSupported(): Promise<boolean> {
+  return Boolean(getWebHid());
+}
+
 export async function detectLedgerSupport(): Promise<boolean> {
-  return isLedgerWebUsbSupported();
+  return Boolean(getWebUsb() || getWebHid());
 }
 
 export async function detectTrezorSupport(): Promise<boolean> {
   if (typeof window === "undefined") return false;
-  return Boolean((window as Window & { TrezorConnect?: unknown }).TrezorConnect);
+  return Boolean(
+    (window as Window & { TrezorConnect?: unknown }).TrezorConnect,
+  );
 }
 
 export async function connectHardwareWallet(
@@ -171,11 +184,7 @@ export const STELLAR_COIN_TYPE = 148;
 export type LedgerDerivationPath = `m/44'/${number}'/${number}'`;
 
 export type LedgerDeviceState =
-  | "ready"
-  | "locked"
-  | "user_rejected"
-  | "app_not_open"
-  | "disconnected";
+  "ready" | "locked" | "user_rejected" | "app_not_open" | "disconnected";
 
 /** Public key + address for one derivation path. */
 export type LedgerAddressResult = {
@@ -271,7 +280,6 @@ function readLevel(words: Uint8Array, level: number): number {
   return word % 0x80000000;
 }
 
-
 // ---------------------------------------------------------------------------
 // StrKey encoding
 //
@@ -337,7 +345,6 @@ export function encodeStellarAddress(publicKey: Uint8Array): string {
   return base32Encode(full);
 }
 
-
 /** Concatenate byte arrays without a spread (argument limits on long payloads). */
 function concatBytes(chunks: Array<Uint8Array>): Uint8Array {
   const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -402,18 +409,23 @@ export type LedgerApduResponse = {
  * response is complete), so each packet contributes only the bytes it
  * actually holds rather than a fixed chunk size.
  */
-export function parseResponsePackets(packets: Uint8Array[]): LedgerApduResponse {
+export function parseResponsePackets(
+  packets: Uint8Array[],
+): LedgerApduResponse {
   if (packets.length === 0) {
     throw new Error("Ledger returned no response packets");
   }
 
-  const payload = concatBytes(packets.slice(1).map((packet) => packet.slice(5)));
+  const payload = concatBytes(
+    packets.slice(1).map((packet) => packet.slice(5)),
+  );
 
   if (payload.length < 2) {
     throw new Error("Ledger response is missing a status word");
   }
 
-  const statusWord = (payload[payload.length - 2] << 8) | payload[payload.length - 1];
+  const statusWord =
+    (payload[payload.length - 2] << 8) | payload[payload.length - 1];
   return { data: payload.slice(0, payload.length - 2), statusWord };
 }
 
@@ -452,9 +464,11 @@ export function describeLedgerState(state: LedgerDeviceState): string {
   }
 }
 
-
 /** Assert the exchange succeeded, throwing a classified error when it did not. */
-function assertDeviceReady(statusWord: number, operation: string): LedgerDeviceState {
+function assertDeviceReady(
+  statusWord: number,
+  operation: string,
+): LedgerDeviceState {
   const state = statusWordToState(statusWord);
   if (state !== "ready") {
     const code =
@@ -466,7 +480,9 @@ function assertDeviceReady(statusWord: number, operation: string): LedgerDeviceS
     throw new HardwareWalletConnectionError(
       code,
       `${operation} failed: ${describeLedgerState(state)}`,
-      state === "locked" || state === "user_rejected" || state === "app_not_open",
+      state === "locked" ||
+        state === "user_rejected" ||
+        state === "app_not_open",
     );
   }
   return state;
@@ -511,7 +527,6 @@ async function withTimeout<T>(
 /** Default exchange timeout; equals the device lock timeout. */
 export const DEFAULT_LEDGER_TIMEOUT_MS = LEDGER_LOCK_TIMEOUT_MS;
 
-
 /**
  * A connected Ledger device ready to derive addresses and sign.
  *
@@ -540,7 +555,10 @@ export class LedgerStellarBridge {
   }
 
   /** Send one APDU and return the reassembled response. */
-  async exchange(apdu: Uint8Array, timeoutMs: number): Promise<LedgerApduResponse> {
+  async exchange(
+    apdu: Uint8Array,
+    timeoutMs: number,
+  ): Promise<LedgerApduResponse> {
     const { transferOut, transferIn } = this.assertTransport();
 
     const readAll = (async () => {
@@ -554,7 +572,11 @@ export class LedgerStellarBridge {
       // terminates.
       const received: Uint8Array[] = [];
       for (let i = 0; i < MAX_RESPONSE_PACKETS; i += 1) {
-        const result = await transferIn.call(this.device, LEDGER_EP_IN, LEDGER_PACKET_SIZE);
+        const result = await transferIn.call(
+          this.device,
+          LEDGER_EP_IN,
+          LEDGER_PACKET_SIZE,
+        );
         const buffer = result?.data?.buffer;
         if (!buffer) {
           throw new HardwareWalletConnectionError(
@@ -571,16 +593,22 @@ export class LedgerStellarBridge {
       return received;
     })();
 
-    return parseResponsePackets(await withTimeout(readAll, timeoutMs, "Ledger exchange"));
+    return parseResponsePackets(
+      await withTimeout(readAll, timeoutMs, "Ledger exchange"),
+    );
   }
 
   /** Derive the account address for a BIP-44 path. */
-  async getAddress(options: LedgerExchangeOptions = {}): Promise<LedgerAddressResult> {
+  async getAddress(
+    options: LedgerExchangeOptions = {},
+  ): Promise<LedgerAddressResult> {
     const path = options.path ?? buildStellarPath();
     const timeoutMs = options.timeoutMs ?? DEFAULT_LEDGER_TIMEOUT_MS;
     const pathBytes = encodeDerivationPath(path);
 
-    options.onPrompt?.(`Confirm the address for ${path} on your Ledger screen.`);
+    options.onPrompt?.(
+      `Confirm the address for ${path} on your Ledger screen.`,
+    );
 
     // P1 = 1 asks the app to return the StrKey alongside the public key.
     const apdu = buildApdu(
@@ -611,7 +639,6 @@ export class LedgerStellarBridge {
     const publicKey = raw.slice(0, 32);
     return { publicKey, address: encodeStellarAddress(publicKey), path };
   }
-
 
   /**
    * Sign a transaction envelope on the device.
@@ -672,7 +699,6 @@ export class LedgerStellarBridge {
     return this.productName;
   }
 }
-
 
 /** Base64-encode bytes without relying on Node's Buffer. */
 export function bytesToBase64(bytes: Uint8Array): string {
@@ -769,4 +795,3 @@ export async function openLedgerDevice(): Promise<LedgerStellarBridge> {
   const device = await claimLedgerDevice();
   return new LedgerStellarBridge(device, device.productName || "Ledger device");
 }
-

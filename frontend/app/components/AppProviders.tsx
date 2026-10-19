@@ -9,6 +9,7 @@ import {
   AccessibilityComplianceProvider,
   AccessibilityComplianceStatus,
 } from "@/src/components/accessibility/AccessibilityComplianceProvider";
+import { TransactionToasts } from "@/src/components/TransactionToasts";
 
 import { useState } from "react";
 import { AuthProvider } from "@/context/AuthContext";
@@ -43,6 +44,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                     {children}
                     <AccessibilityComplianceStatus />
                     <WalletConnectModalHost />
+                    <TransactionToasts />
                   </OnboardingProvider>
                 </WalletProvider>
               </AccessibilityComplianceProvider>
