@@ -7,6 +7,7 @@ import { ClientInit } from "./ClientInit";
 import { AppProviders } from "@/app/components/AppProviders";
 import { AIAssistantProvider } from "@/components/AIAssistant";
 import { ErrorBoundary } from "@sentry/nextjs";
+import { ThemeProvider } from "./theme/ThemeProvider";
 import { ThemeProvider } from "next-themes";
 import { ThemeInitScript } from "./theme-init";
 import { THEME_STORAGE_KEY } from "@/src/lib/theme/themeEngine";
@@ -65,7 +66,6 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
 };
 
 export default async function RootLayout({
@@ -107,6 +107,7 @@ export default async function RootLayout({
       <body className="antialiased min-h-dvh w-full overflow-x-clip">
         <ClientInit />
         <ErrorBoundary fallback={GlobalErrorFallback}>
+          <ThemeProvider>
           <ThemeProvider
             attribute="data-theme"
             defaultTheme="system"
