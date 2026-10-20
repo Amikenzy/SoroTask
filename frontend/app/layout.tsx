@@ -9,9 +9,14 @@ import { AIAssistantProvider } from "@/components/AIAssistant";
 import { ErrorBoundary } from "@sentry/nextjs";
 import { ThemeProvider } from "./theme/ThemeProvider";
 import { ThemeProvider } from "next-themes";
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages } from "next-intl/server";
+import { getTextDirection } from "@/i18n";
 import { ThemeInitScript } from "./theme-init";
 import { THEME_STORAGE_KEY } from "@/src/lib/theme/themeEngine";
 import { PriceTicker } from "@/src/components/PriceTicker";
+
+function GlobalErrorFallback({ resetError }: any) {
 import { TransactionToasts } from "@/src/components/TransactionToasts";
 
 function GlobalErrorFallback({
@@ -71,6 +76,14 @@ export const viewport: Viewport = {
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const [locale, messages] = await Promise.all([getLocale(), getMessages()]);
+
+  return (
+    <html
+      lang={locale}
+      dir={getTextDirection(locale)}
+      suppressHydrationWarning
+    >
   const nonce = (await headers()).get("x-nonce");
   if (!nonce) {
     throw new Error("Missing CSP nonce. Ensure the security proxy runs for this page.");
@@ -102,6 +115,29 @@ export default async function RootLayout({
             `,
           }}
         />
+        <ThemeInitScript />
+      </head>
+      <body className="antialiased min-h-dvh w-full overflow-x-clip">
+        <NextIntlClientProvider locale={locale} messages={messages}>
+          <ErrorBoundary fallback={GlobalErrorFallback}>
+            <ThemeProvider
+              attribute="data-theme"
+              defaultTheme="system"
+              enableSystem
+              storageKey={THEME_STORAGE_KEY}
+              disableTransitionOnChange
+            >
+              <AIAssistantProvider>
+                <AppProviders defaultLocale={locale}>
+                  <PriceTicker />
+                  <CommandPalette />
+                  {children}
+                </AppProviders>
+              </AIAssistantProvider>
+            </ThemeProvider>
+          </ErrorBoundary>
+        </NextIntlClientProvider>
+        <ClientInit />
         <ThemeInitScript nonce={nonce} />
       </head>
       <body className="antialiased min-h-dvh w-full overflow-x-clip">
