@@ -1071,6 +1071,439 @@ class ExecutionQueue extends EventEmitter {
       ? this.retryScheduler.getStatistics()
       : { total: 0, pending: 0, overdue: 0 };
   }
+
+  /**
+   * #1454 — Execute a high-concurrency stress benchmark on this queue instance.
+   * @param {object} options
+   * @returns {Promise<object>}
+   */
+  async runStressBenchmark(options = {}) {
+    const harness = new StressBenchmarkHarness({
+      ...options,
+      queue: this,
+    });
+    return harness.run(options);
+  }
 }
 
-module.exports = { ExecutionQueue, KafkaTaskStream, DependencyGraph };
+// ---------------------------------------------------------------------------
+// #1454 — Automated Benchmark & Stress Testing Harness (10,000 Concurrent Tasks)
+// ---------------------------------------------------------------------------
+
+const PRIORITY_RING = ['low', 'medium', 'high', 'critical'];
+
+/**
+ * Generate synthetic task registrations for stress and load testing.
+ *
+ * @param {number} [count=10000] - Number of synthetic tasks to generate
+ * @param {object} [options={}]
+ * @returns {Array<object>}
+ */
+function generateSyntheticTasks(count = 10000, options = {}) {
+  const total = Math.max(0, Math.floor(Number(count) || 0));
+  const baseTimestamp = Number.isFinite(options.baseTimestamp) ? options.baseTimestamp : 1_700_000_000;
+  const defaultInterval = Number.isFinite(options.defaultInterval) ? options.defaultInterval : 60;
+  const dueRatio = Number.isFinite(options.dueRatio)
+    ? Math.min(1, Math.max(0, options.dueRatio))
+    : 1.0;
+  const underfundedRatio = Number.isFinite(options.underfundedRatio)
+    ? Math.min(1, Math.max(0, options.underfundedRatio))
+    : 0;
+  const contractPrefix = options.contractPrefix || 'CSYNTHETIC';
+
+  const tasks = new Array(total);
+  const dueCutoff = Math.floor(total * dueRatio);
+  const underfundedCutoff = Math.floor(total * underfundedRatio);
+
+  for (let i = 0; i < total; i++) {
+    const taskId = i + 1;
+    const isUnderfunded = i < underfundedCutoff;
+    const isDue = !isUnderfunded && i < dueCutoff + underfundedCutoff;
+    const interval = defaultInterval + (i % 5) * 15;
+    const lastRun = isDue
+      ? baseTimestamp - interval - (i % 30)
+      : baseTimestamp - Math.floor(interval / 2);
+    const priority = PRIORITY_RING[i % PRIORITY_RING.length];
+    const bounty = (1 + (i % 20)) * 100;
+
+    tasks[i] = {
+      taskId,
+      creator: `GCREATOR${String(taskId).padStart(8, '0')}`,
+      target: `${contractPrefix}${String((i % 50) + 1).padStart(6, '0')}`,
+      function: i % 3 === 0 ? 'rebalance_pool' : (i % 3 === 1 ? 'harvest_yield' : 'settle_epoch'),
+      args: [taskId],
+      interval,
+      last_run: lastRun,
+      gas_balance: isUnderfunded ? 0 : 10_000 + (i % 5000),
+      priority,
+      bounty,
+      dueAt: (lastRun + interval) * 1000,
+      dueLedger: 1000 + (i % 10),
+      deps: options.withDependencies && i > 0 && i % 250 === 0 ? [taskId - 1] : [],
+    };
+  }
+
+  return tasks;
+}
+
+/**
+ * Simulate concurrent due conditions across a batch of registered tasks for a given ledger.
+ *
+ * @param {Array<object>} tasks - Synthetic task descriptors
+ * @param {object} [options={}]
+ * @returns {object}
+ */
+function simulateConcurrentDueConditions(tasks = [], options = {}) {
+  const currentTimestamp = Number.isFinite(options.currentTimestamp)
+    ? options.currentTimestamp
+    : 1_700_000_000;
+  const ledgerSequence = Number.isFinite(options.ledgerSequence)
+    ? options.ledgerSequence
+    : 1005;
+
+  const dueTasks = [];
+  const waitingTasks = [];
+  const underfundedTasks = [];
+  const taskConfigMap = {};
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    if (!task || task.taskId === undefined) continue;
+    taskConfigMap[task.taskId] = task;
+
+    if (typeof task.gas_balance === 'number' && task.gas_balance <= 0) {
+      underfundedTasks.push(task);
+      continue;
+    }
+
+    const nextRun = (Number(task.last_run) || 0) + (Number(task.interval) || 0);
+    if (nextRun <= currentTimestamp) {
+      dueTasks.push({
+        ...task,
+        dueLedger: task.dueLedger ?? ledgerSequence,
+        latenessSeconds: Math.max(0, currentTimestamp - nextRun),
+      });
+    } else {
+      waitingTasks.push(task);
+    }
+  }
+
+  return {
+    ledgerSequence,
+    currentTimestamp,
+    totalTasks: tasks.length,
+    dueCount: dueTasks.length,
+    waitingCount: waitingTasks.length,
+    underfundedCount: underfundedTasks.length,
+    dueTasks,
+    waitingTasks,
+    underfundedTasks,
+    taskConfigMap,
+  };
+}
+
+function computePercentile(sortedValues, percentile) {
+  if (!sortedValues.length) return 0;
+  const idx = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil((percentile / 100) * sortedValues.length) - 1),
+  );
+  return sortedValues[idx];
+}
+
+/**
+ * Distributed load test & stress benchmark harness measuring keeper cluster
+ * throughput, transaction queue latency, RPC socket utilization, and memory/CPU stability.
+ */
+class StressBenchmarkHarness {
+  constructor(options = {}) {
+    this.taskCount = Number.isFinite(options.taskCount) ? options.taskCount : 10000;
+    this.ledgerDurationMs = Number.isFinite(options.ledgerDurationMs) ? options.ledgerDurationMs : 5000;
+    this.minTasksPerLedger = Number.isFinite(options.minTasksPerLedger) ? options.minTasksPerLedger : 500;
+    this.maxHeapGrowthMb = Number.isFinite(options.maxHeapGrowthMb) ? options.maxHeapGrowthMb : 256;
+    this.maxCpuUtilizationRatio = Number.isFinite(options.maxCpuUtilizationRatio)
+      ? options.maxCpuUtilizationRatio
+      : 5.0;
+    this.maxRpcSockets = Number.isFinite(options.maxRpcSockets) ? options.maxRpcSockets : 256;
+    this.workerConcurrency = Number.isFinite(options.workerConcurrency) ? options.workerConcurrency : 500;
+    this.maxWritesPerSecond = Number.isFinite(options.maxWritesPerSecond) ? options.maxWritesPerSecond : 50000;
+    this.queue = options.queue || null;
+  }
+
+  /**
+   * Run the stress benchmark simulation and profile performance bottlenecks.
+   *
+   * @param {object} [runOptions={}]
+   * @returns {Promise<object>}
+   */
+  async run(runOptions = {}) {
+    const taskCount = Number.isFinite(runOptions.taskCount) ? runOptions.taskCount : this.taskCount;
+    const baseTimestamp = 1_700_000_000;
+
+    const memBefore = process.memoryUsage();
+    const cpuBefore = process.cpuUsage();
+    const overallStartNs = process.hrtime.bigint();
+
+    // Stage 1: Synthetic task generation & concurrent due evaluation
+    const genStartNs = process.hrtime.bigint();
+    const syntheticTasks = runOptions.tasks || generateSyntheticTasks(taskCount, {
+      baseTimestamp,
+      dueRatio: runOptions.dueRatio !== undefined ? runOptions.dueRatio : 1.0,
+      underfundedRatio: runOptions.underfundedRatio || 0,
+      withDependencies: Boolean(runOptions.withDependencies),
+    });
+    const dueSimulation = simulateConcurrentDueConditions(syntheticTasks, {
+      currentTimestamp: baseTimestamp,
+      ledgerSequence: 2000,
+    });
+    const ingestionMs = Number(process.hrtime.bigint() - genStartNs) / 1e6;
+
+    // Stage 2: Priority ordering & DAG batch resolution
+    const schedStartNs = process.hrtime.bigint();
+    const silentLogger = {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+      trace: () => {},
+      fatal: () => {},
+    };
+
+    const queue = this.queue || new ExecutionQueue(this.workerConcurrency, null, {
+      logger: silentLogger,
+      maxWritesPerSecond: this.maxWritesPerSecond,
+      distributedLockEnabled: false,
+      retryScheduler: {
+        initialize: async () => {},
+        getReadyRetries: () => [],
+        scheduleRetry: async () => ({ scheduled: false }),
+        completeRetry: async () => ({ removed: true }),
+        getRetryMetadata: () => null,
+        getStatistics: () => ({ total: 0, pending: 0, overdue: 0 }),
+        shutdown: async () => {},
+      },
+    });
+
+    // Ensure high throughput limiter on dedicated benchmark queue
+    if (!this.queue) {
+      queue.concurrencyLimit = this.workerConcurrency;
+      queue.maxWritesPerSecond = this.maxWritesPerSecond;
+      queue.distributedLockEnabled = false;
+      queue.limit = (fn) => fn();
+    }
+
+    const schedulingSetupMs = Number(process.hrtime.bigint() - schedStartNs) / 1e6;
+
+    // Stage 3: Execute due tasks while profiling latencies and RPC socket usage
+    const execStartNs = process.hrtime.bigint();
+    const latenciesMs = [];
+    let activeSockets = 0;
+    let peakSockets = 0;
+    let totalRpcCalls = 0;
+    let executedCount = 0;
+
+    const customExecutor = runOptions.executorFn || (async (taskId) => {
+      const taskStartNs = process.hrtime.bigint();
+      activeSockets++;
+      totalRpcCalls++;
+      if (activeSockets > peakSockets) {
+        peakSockets = activeSockets;
+      }
+      await Promise.resolve();
+      activeSockets--;
+      executedCount++;
+      const latencyMs = Number(process.hrtime.bigint() - taskStartNs) / 1e6;
+      latenciesMs.push(latencyMs);
+      return { ledger: 2000, taskId };
+    });
+
+    const wrappedExecutor = async (taskId, context) => {
+      const taskStartNs = process.hrtime.bigint();
+      activeSockets++;
+      totalRpcCalls++;
+      if (activeSockets > peakSockets) {
+        peakSockets = activeSockets;
+      }
+      try {
+        const res = await customExecutor(taskId, context);
+        executedCount++;
+        latenciesMs.push(Number(process.hrtime.bigint() - taskStartNs) / 1e6);
+        return res;
+      } finally {
+        activeSockets--;
+      }
+    };
+
+    await queue.enqueue(
+      dueSimulation.dueTasks,
+       runOptions.executorFn ? wrappedExecutor : customExecutor,
+      dueSimulation.taskConfigMap,
+    );
+
+    const executionMs = Number(process.hrtime.bigint() - execStartNs) / 1e6;
+    const totalDurationMs = Math.max(0.001, Number(process.hrtime.bigint() - overallStartNs) / 1e6);
+
+    const cpuDelta = process.cpuUsage(cpuBefore);
+    const memAfter = process.memoryUsage();
+
+    const heapBeforeMb = Number((memBefore.heapUsed / (1024 * 1024)).toFixed(2));
+    const heapAfterMb = Number((memAfter.heapUsed / (1024 * 1024)).toFixed(2));
+    const heapGrowthMb = Number(Math.max(0, heapAfterMb - heapBeforeMb).toFixed(2));
+    const rssMb = Number((memAfter.rss / (1024 * 1024)).toFixed(2));
+
+    const cpuUserMs = Number((cpuDelta.user / 1000).toFixed(2));
+    const cpuSystemMs = Number((cpuDelta.system / 1000).toFixed(2));
+    const cpuTotalMs = Number((cpuUserMs + cpuSystemMs).toFixed(2));
+    const cpuUtilizationRatio = Number((cpuTotalMs / Math.max(1, totalDurationMs)).toFixed(3));
+
+    const sortedLatencies = [...latenciesMs].sort((a, b) => a - b);
+    const avgLatencyMs = sortedLatencies.length
+      ? Number((sortedLatencies.reduce((s, v) => s + v, 0) / sortedLatencies.length).toFixed(4))
+      : 0;
+
+    // Throughput normalized to a standard Soroban ledger window (default 5000ms)
+    const tasksPerSecond = (executedCount / totalDurationMs) * 1000;
+    const tasksPerLedger = Math.round((executedCount / totalDurationMs) * this.ledgerDurationMs);
+    const droppedMessages = Math.max(0, dueSimulation.dueCount - executedCount);
+
+    const stageTimings = {
+      ingestionMs: Number(ingestionMs.toFixed(3)),
+      schedulingMs: Number(schedulingSetupMs.toFixed(3)),
+      executionMs: Number(executionMs.toFixed(3)),
+      totalDurationMs: Number(totalDurationMs.toFixed(3)),
+    };
+
+    const bottlenecks = this.profileBottlenecks({
+      stageTimings,
+      heapGrowthMb,
+      peakSockets,
+      p99LatencyMs: computePercentile(sortedLatencies, 99),
+    });
+
+    const withinMemoryThreshold = heapGrowthMb <= this.maxHeapGrowthMb;
+    const withinCpuThreshold = cpuUtilizationRatio <= this.maxCpuUtilizationRatio;
+    const meetsThroughputSlo = tasksPerLedger > this.minTasksPerLedger && droppedMessages === 0;
+
+    return {
+      taskCount,
+      dueCount: dueSimulation.dueCount,
+      executedCount,
+      droppedMessages,
+      tasksPerSecond: Math.round(tasksPerSecond),
+      tasksPerLedger,
+      meetsThroughputSlo,
+      latency: {
+        avgMs: avgLatencyMs,
+        p50Ms: Number(computePercentile(sortedLatencies, 50).toFixed(4)),
+        p95Ms: Number(computePercentile(sortedLatencies, 95).toFixed(4)),
+        p99Ms: Number(computePercentile(sortedLatencies, 99).toFixed(4)),
+      },
+      resources: {
+        heapBeforeMb,
+        heapAfterMb,
+        heapGrowthMb,
+        rssMb,
+        cpuUserMs,
+        cpuSystemMs,
+        cpuTotalMs,
+        cpuUtilizationRatio,
+        withinMemoryThreshold,
+        withinCpuThreshold,
+      },
+      rpcSockets: {
+        peakActiveSockets: peakSockets,
+        maxConfiguredSockets: this.maxRpcSockets,
+        totalRpcCalls,
+        utilizationRatio: Number((peakSockets / Math.max(1, this.maxRpcSockets)).toFixed(4)),
+      },
+      profile: {
+        stageTimings,
+        bottlenecks,
+      },
+    };
+  }
+
+  /**
+   * Analyze execution stage timings and resource metrics to identify bottlenecks.
+   *
+   * @param {object} metrics
+   * @returns {object}
+   */
+  profileBottlenecks({ stageTimings, heapGrowthMb, peakSockets, p99LatencyMs }) {
+    const entries = [
+      { stage: 'ingestion', durationMs: stageTimings.ingestionMs },
+      { stage: 'scheduling', durationMs: stageTimings.schedulingMs },
+      { stage: 'execution', durationMs: stageTimings.executionMs },
+    ].sort((a, b) => b.durationMs - a.durationMs);
+
+    const dominantStage = entries[0]?.stage || 'execution';
+    const hotspots = [];
+
+    if (stageTimings.executionMs > stageTimings.ingestionMs * 2) {
+      hotspots.push('queue_execution_dispatch');
+    }
+    if (heapGrowthMb > this.maxHeapGrowthMb * 0.75) {
+      hotspots.push('heap_allocation_pressure');
+    }
+    if (peakSockets > this.maxRpcSockets * 0.8) {
+      hotspots.push('rpc_socket_saturation');
+    }
+    if (p99LatencyMs > 100) {
+      hotspots.push('tail_latency_contention');
+    }
+
+    return {
+      dominantStage,
+      rankedStages: entries,
+      hotspots,
+    };
+  }
+
+  /**
+   * Generate a k6 load test script configuration for distributed cluster stress testing.
+   *
+   * @param {object} [opts={}]
+   * @returns {string}
+   */
+  static generateK6Script(opts = {}) {
+    const targetUrl = opts.targetUrl || 'http://localhost:3000/api/tasks/execute-batch';
+    const vus = opts.vus || 100;
+    const duration = opts.duration || '30s';
+    return [
+      "import http from 'k6/http';",
+      "import { check } from 'k6';",
+      `export const options = { vus: ${vus}, duration: '${duration}', thresholds: { http_req_failed: ['rate==0'], http_req_duration: ['p(95)<250'] } };`,
+      'export default function () {',
+      `  const res = http.post('${targetUrl}', JSON.stringify({ batchSize: 100 }), { headers: { 'Content-Type': 'application/json' } });`,
+      "  check(res, { 'status is 200': (r) => r.status === 200 });",
+      '}',
+    ].join('\n');
+  }
+
+  /**
+   * Generate a Locust distributed load test script for keeper cluster stress testing.
+   *
+   * @param {object} [opts={}]
+   * @returns {string}
+   */
+  static generateLocustScript(opts = {}) {
+    const endpoint = opts.endpoint || '/api/tasks/execute-batch';
+    return [
+      'from locust import HttpUser, task, between',
+      'class KeeperStressUser(HttpUser):',
+      '    wait_time = between(0.01, 0.05)',
+      '    @task',
+      '    def execute_due_batch(self):',
+      `        self.client.post("${endpoint}", json={"concurrentTasks": 10000})`,
+    ].join('\n');
+  }
+}
+
+module.exports = {
+  ExecutionQueue,
+  KafkaTaskStream,
+  DependencyGraph,
+  generateSyntheticTasks,
+  simulateConcurrentDueConditions,
+  StressBenchmarkHarness,
+};

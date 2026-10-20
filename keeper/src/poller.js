@@ -47,6 +47,8 @@ class TaskPoller {
     this.config = options.config || null;
     this.historyManager = options.historyManager || null;
     this.resolverRuntime = options.resolverRuntime || null;
+    this.oracleAggregator = options.oracleAggregator || null;
+    this.fraudDetection = options.fraudDetection || null;
     this.resolverFailureMode = options.resolverFailureMode || process.env.RESOLVER_FAILURE_MODE || 'skip';
     this.shardLabel = options.shardLabel || null;
     this.driftWarningSeconds = parseInt(
@@ -678,6 +680,39 @@ class TaskPoller {
         }
       }
 
+      // #1455 — Evaluate multi-source oracle price condition when configured
+      let oracleEvaluation = null;
+      if (isDue && this.oracleAggregator && (taskConfig.oracleCondition || taskConfig.oracle)) {
+        oracleEvaluation = await this.evaluateOracleGate(taskId, taskConfig, { taskLogger });
+        if (oracleEvaluation && !oracleEvaluation.isReady) {
+          isDue = false;
+          reason = oracleEvaluation.reason || 'oracle_not_ready';
+        }
+      }
+
+      // #1464 — Real-Time Anomaly Detection & Flash Loan Quarantine Gate
+      let anomalyEvaluation = null;
+      if (isDue && this.fraudDetection) {
+        if (typeof this.fraudDetection.isTaskQuarantined === 'function' && this.fraudDetection.isTaskQuarantined(taskId)) {
+          isDue = false;
+          reason = 'quarantined_anomaly';
+        } else if (taskConfig.executionTelemetry && typeof this.fraudDetection.evaluateFlashLoanAnomaly === 'function') {
+          anomalyEvaluation = this.fraudDetection.evaluateFlashLoanAnomaly({
+            taskId,
+            ...taskConfig.executionTelemetry,
+          });
+          if (anomalyEvaluation.isAnomalous) {
+            isDue = false;
+            reason = 'quarantined_anomaly';
+            taskLogger.warn('Task auto-paused by anomaly detection engine before execution', {
+              taskId,
+              anomalyScore: anomalyEvaluation.anomalyScore,
+              reasons: anomalyEvaluation.reasons,
+            });
+          }
+        }
+      }
+
       return {
         isDue,
         taskId,
@@ -692,6 +727,8 @@ class TaskPoller {
         driftSeconds,
         driftSeverity,
         resolver,
+        oracle: oracleEvaluation,
+        anomaly: anomalyEvaluation,
       };
 
     } catch (error) {
@@ -715,6 +752,35 @@ class TaskPoller {
     }
 
     return null;
+  }
+
+  /**
+   * #1455 — Evaluate multi-source oracle condition for an oracle-dependent task.
+   *
+   * @param {number} taskId
+   * @param {object} taskConfig
+   * @param {object} [options={}]
+   * @returns {Promise<object|null>}
+   */
+  async evaluateOracleGate(taskId, taskConfig, options = {}) {
+    const condition = taskConfig && (taskConfig.oracleCondition || taskConfig.oracle);
+    if (!condition || !this.oracleAggregator) {
+      return null;
+    }
+    const taskLogger = options.taskLogger || this.logger;
+    try {
+      return await this.oracleAggregator.evaluatePriceCondition(condition);
+    } catch (error) {
+      taskLogger.error('Oracle condition evaluation failed', {
+        taskId,
+        error: error.message,
+      });
+      return {
+        isReady: false,
+        reason: 'oracle_error',
+        error: error.message,
+      };
+    }
   }
 
   async evaluateResolverGate(taskId, taskConfig, currentTimestamp, options = {}) {
