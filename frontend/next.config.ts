@@ -22,6 +22,10 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=()",
   },
+  {
+    key: "X-DNS-Prefetch-Control",
+    value: "on",
+  },
 ];
 
 const pluginFrameOrigins = (process.env.NEXT_PUBLIC_SOROTASK_PLUGIN_ORIGINS ?? "")

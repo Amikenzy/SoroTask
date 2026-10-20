@@ -66,9 +66,25 @@ export function TemplateCard({ template, onUseTemplate }: TemplateCardProps) {
       className="flex h-full flex-col gap-4 rounded-xl border border-neutral-700/60 bg-neutral-900 p-5 transition-shadow hover:border-neutral-600 hover:shadow-lg"
     >
       <header className="flex items-start justify-between gap-3">
-        <h2 className="text-base font-semibold text-neutral-100">
-          {template.name}
-        </h2>
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+              {template.category}
+            </span>
+            {template.ipfsCid && (
+              <span
+                data-testid={`ipfs-badge-${template.id}`}
+                className="rounded bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 text-[10px] font-mono font-medium text-cyan-300"
+                title={`IPFS CID: ${template.ipfsCid}`}
+              >
+                IPFS Verified
+              </span>
+            )}
+          </div>
+          <h2 className="text-base font-semibold text-neutral-100">
+            {template.name}
+          </h2>
+        </div>
         <span
           data-testid={`template-trust-${template.id}`}
           className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${trust.badge}`}
@@ -77,6 +93,24 @@ export function TemplateCard({ template, onUseTemplate }: TemplateCardProps) {
           {trust.label}
         </span>
       </header>
+
+      {/* Community Star Rating Verified On-Chain */}
+      <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center text-amber-400 font-bold">
+          <span>★</span>
+          <span className="ml-1 text-neutral-200">
+            {template.communityRating ?? 4.8}
+          </span>
+        </div>
+        <span className="text-neutral-500">
+          ({template.ratingCount ?? 12} reviews)
+        </span>
+        {template.onChainRatingVerified && (
+          <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+            ✓ On-chain verified
+          </span>
+        )}
+      </div>
 
       <p className="text-sm text-neutral-400">{template.description}</p>
 

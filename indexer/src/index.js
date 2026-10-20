@@ -703,6 +703,37 @@ process.on("SIGINT", () => {
   });
 });
 
+const DEBEZIUM_CONNECTOR_CONFIG = {
+  name: 'postgres-cdc-keeper-connector',
+  config: {
+    'connector.class': 'io.debezium.connector.postgresql.PostgresConnector',
+    'plugin.name': 'pgoutput',
+    'database.hostname': process.env.PG_HOST || 'localhost',
+    'database.port': process.env.PG_PORT || '5432',
+    'database.user': process.env.PG_USER || 'postgres',
+    'database.password': process.env.PG_PASSWORD || 'postgres',
+    'database.dbname': process.env.PG_DATABASE || 'sorotask',
+    'database.server.name': 'sorotask_cdc',
+    'table.include.list': 'public.tasks,public.task_configs',
+    'tombstones.on.delete': 'false',
+    'decimal.handling.mode': 'double',
+  },
+};
+
+async function publishCDCMutation(producer, topic, mutationEvent) {
+  if (!producer || typeof producer.send !== 'function') return;
+  const key = mutationEvent?.payload?.after?.id || mutationEvent?.payload?.before?.id || null;
+  await producer.send({
+    topic: topic || process.env.KEEPER_CDC_TOPIC || 'sorotask.cdc.keeper.mutations',
+    messages: [
+      {
+        key: key !== null ? String(key) : null,
+        value: JSON.stringify(mutationEvent),
+      },
+    ],
+  });
+}
+
 module.exports = {
   handleEvent,
   reconcileTask,
@@ -710,5 +741,7 @@ module.exports = {
   HighAvailabilityManager,
   CacheInvalidationEngine,
   ParallelLedgerParser,
+  DEBEZIUM_CONNECTOR_CONFIG,
+  publishCDCMutation,
 };
 

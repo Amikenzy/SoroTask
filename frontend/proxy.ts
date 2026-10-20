@@ -28,11 +28,13 @@ export default auth((req) => {
     isDev,
     extraDirectives: {
       "connect-src": [
+        "'self'",
         "https://*.stellar.org",
         "https://*.soroban.org",
         "https://soroban-testnet.stellar.org",
         "https://horizon-testnet.stellar.org",
         "https://*.sentry.io",
+        "https://*.sorotask.com",
         "wss://*.stellar.org",
         `wss://${req.nextUrl.host}`,
         ...(isDev ? ["http://localhost:*", "ws://localhost:*"] : []),
@@ -46,7 +48,7 @@ export default auth((req) => {
 
   // Public routes that don't require authentication
   const publicRoutes = ["/", "/auth/signin", "/auth/error"];
-  const isPublicRoute = publicRoutes.some((route) => pathname === route || pathname.startsWith(route));
+  const isPublicRoute = publicRoutes.some((route) => pathname === route);
 
   // Handle callback URL preservation
   const callbackUrl = req.nextUrl.searchParams.get("callbackUrl") || pathname;
