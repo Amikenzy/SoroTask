@@ -518,6 +518,83 @@ class TaskRegistry extends EventEmitter {
       this.logger.warn('Could not persist tasks', { error: err.message });
     }
   }
+
+  applyCDCEvent(event) {
+    if (!event || !event.payload) return;
+    const { op, after, before, source } = event.payload;
+    const table = source?.table;
+    if (table && table !== 'tasks' && table !== 'task_configs') return;
+
+    switch (op) {
+      case 'c':
+      case 'r':
+      case 'u': {
+        const row = after;
+        if (!row || row.id == null) return;
+        const taskId = Number(row.id);
+        if (isNaN(taskId)) return;
+        this.taskIds.add(taskId);
+        this.updateTask(taskId, {
+          id: taskId,
+          ...row,
+        }, { source: 'CDC' });
+        this.emit('cdcTaskUpdated', { taskId, op, row });
+        break;
+      }
+      case 'd': {
+        const row = before;
+        if (!row || row.id == null) return;
+        const taskId = Number(row.id);
+        if (isNaN(taskId)) return;
+        this.tasks.delete(taskId);
+        this.taskIds.delete(taskId);
+        this.emit('cdcTaskDeleted', { taskId });
+        break;
+      }
+      default:
+        break;
+    }
+    const affectedId = after?.id ?? before?.id;
+    if (affectedId != null && !isNaN(Number(affectedId))) {
+      this.invalidateResolverResult(Number(affectedId));
+    }
+  }
+
+  async startCDCSubscriber(options = {}) {
+    const brokers = (options.brokers || process.env.KAFKA_BROKERS || 'localhost:9092').split(',').filter(Boolean);
+    const topic = options.topic || process.env.KEEPER_CDC_TOPIC || 'sorotask.cdc.keeper.mutations';
+    const groupId = options.groupId || 'keeper-cdc-registry-group';
+
+    let Kafka;
+    try {
+      ({ Kafka } = require('kafkajs'));
+    } catch (_err) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn('kafkajs not available; CDC subscriber inactive');
+      }
+      return null;
+    }
+
+    const kafka = new Kafka({ clientId: 'keeper-cdc-consumer', brokers });
+    const consumer = kafka.consumer({ groupId });
+    await consumer.connect();
+    await consumer.subscribe({ topic, fromBeginning: false });
+
+    await consumer.run({
+      eachMessage: async ({ message }) => {
+        try {
+          const payload = JSON.parse(message.value.toString());
+          this.applyCDCEvent(payload);
+        } catch (err) {
+          if (this.logger && typeof this.logger.warn === 'function') {
+            this.logger.warn('Error processing CDC event', { error: err.message });
+          }
+        }
+      },
+    });
+
+    return consumer;
+  }
 }
 
 module.exports = TaskRegistry;

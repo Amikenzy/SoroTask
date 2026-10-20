@@ -6,6 +6,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { withRouteGuard } from "@/lib/routeGuards";
 import { useAuth } from "@/context/AuthContext";
 import { useTranslation } from "@/hooks/useI18n";
@@ -14,6 +15,7 @@ import {
   DEFAULT_PROPOSAL,
   type UpgradeProposal,
 } from "@/src/components/UpgradeModal";
+import { StorageInspector } from "@/src/components/StorageInspector";
 
 function AdminPage() {
   const { user } = useAuth();
@@ -98,6 +100,27 @@ function AdminPage() {
               Review Upgrade & Vote
             </button>
           </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="mb-4 text-xl font-semibold text-neutral-800">
+              Role-based access
+            </h2>
+            <p className="mb-4 text-sm text-neutral-600">
+              Review protocol roles, delegation requests, permissions, and the
+              role-change audit timeline.
+            </p>
+            <Link
+              href="/settings/rbac"
+              className="inline-block rounded bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700"
+            >
+              Manage roles
+            </Link>
+          </div>
+        </div>
+
+        {/* Contract Storage Inspector */}
+        <div className="mt-8">
+          <StorageInspector />
         </div>
 
         {/* Upgrade Governance Modal */}

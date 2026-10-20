@@ -1,10 +1,13 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
 import { CommandPalette } from "@/components/CommandPalette";
+import { PwaRegistration } from "@/components/pwa/PwaRegistration";
+import { ClientInit } from "./ClientInit";
 import { AppProviders } from "@/app/components/AppProviders";
 import { AIAssistantProvider } from "@/components/AIAssistant";
-import { ClientInit } from "./ClientInit";
 import { ErrorBoundary } from "@sentry/nextjs";
+import { ThemeProvider } from "./theme/ThemeProvider";
 import { ThemeProvider } from "next-themes";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
@@ -14,6 +17,14 @@ import { THEME_STORAGE_KEY } from "@/src/lib/theme/themeEngine";
 import { PriceTicker } from "@/src/components/PriceTicker";
 
 function GlobalErrorFallback({ resetError }: any) {
+import { TransactionToasts } from "@/src/components/TransactionToasts";
+
+function GlobalErrorFallback({
+  resetError,
+}: {
+  error: Error;
+  resetError: () => void;
+}) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-neutral-900 text-neutral-100">
       <h2 className="mb-4 text-xl font-bold">Something went wrong!</h2>
@@ -32,6 +43,7 @@ export const metadata: Metadata = {
   description:
     "Track route load, task open, search, and mutation responsiveness in the SoroTask frontend.",
   manifest: "/manifest.json",
+  themeColor: "#09090b",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -59,7 +71,6 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
 };
 
 export default async function RootLayout({
@@ -73,6 +84,13 @@ export default async function RootLayout({
       dir={getTextDirection(locale)}
       suppressHydrationWarning
     >
+  const nonce = (await headers()).get("x-nonce");
+  if (!nonce) {
+    throw new Error("Missing CSP nonce. Ensure the security proxy runs for this page.");
+  }
+
+  return (
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link
           rel="preconnect"
@@ -87,6 +105,7 @@ export default async function RootLayout({
         />
         <link rel="dns-prefetch" href="https://rpc-mainnet.stellar.org" />
         <style
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: `
               :root { --font-fallback: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
@@ -119,6 +138,30 @@ export default async function RootLayout({
           </ErrorBoundary>
         </NextIntlClientProvider>
         <ClientInit />
+        <ThemeInitScript nonce={nonce} />
+      </head>
+      <body className="antialiased min-h-dvh w-full overflow-x-clip">
+        <ClientInit />
+        <ErrorBoundary fallback={GlobalErrorFallback}>
+          <ThemeProvider>
+          <ThemeProvider
+            attribute="data-theme"
+            defaultTheme="system"
+            enableSystem
+            storageKey={THEME_STORAGE_KEY}
+            disableTransitionOnChange
+          >
+            <AIAssistantProvider>
+              <AppProviders>
+                <PriceTicker />
+                <CommandPalette />
+                <TransactionToasts />
+                {children}
+              </AppProviders>
+            </AIAssistantProvider>
+          </ThemeProvider>
+        </ErrorBoundary>
+        <PwaRegistration />
       </body>
     </html>
   );

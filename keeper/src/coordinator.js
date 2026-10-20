@@ -17,6 +17,9 @@ class ExecutionCoordinator {
     this.activeFencingTokens = new Map();
     // Map of taskId -> highest seen fencing token
     this.highestFencingTokens = new Map();
+    // #1444 — Multi-tenant rate limiter & client tiers
+    this.rateLimiter = options.rateLimiter || null;
+    this.clientTiers = new Map();
   }
 
   /**
@@ -215,6 +218,51 @@ class ExecutionCoordinator {
    * @param {string[]|number[]} taskIds
    * @returns {object} `{ ownedTaskIds, skippedTaskIds, owners, nodeCount }`
    */
+  setClientTier(apiKey, tier) {
+    this.clientTiers.set(apiKey, tier);
+  }
+
+  getClientTier(apiKey) {
+    return this.clientTiers.get(apiKey) || 'FREE';
+  }
+
+  /**
+   * Enforce multi-tenant rate limits on incoming client requests (#1444).
+   * @param {object} req
+   * @param {object} [res]
+   * @returns {Promise<{ success: boolean, status: number, headers: object }>}
+   */
+  async handleClientRequest(req, res) {
+    const apiKey = req?.headers?.['x-api-key'] || req?.query?.apiKey || 'anonymous';
+    const tier = this.getClientTier(apiKey);
+
+    if (!this.rateLimiter) {
+      const { DistributedRateLimiter } = require('./distributedRateLimiter');
+      this.rateLimiter = new DistributedRateLimiter();
+    }
+
+    const rateResult = await this.rateLimiter.checkTenantLimit(apiKey, tier);
+
+    if (res && typeof res.setHeader === 'function') {
+      for (const [header, val] of Object.entries(rateResult.headers)) {
+        res.setHeader(header, val);
+      }
+    }
+
+    if (!rateResult.allowed) {
+      if (res && typeof res.status === 'function') {
+        res.status(429).json({
+          error: 'Too Many Requests',
+          message: 'Rate limit exceeded for client tier.',
+          tier,
+        });
+      }
+      return { success: false, status: 429, headers: rateResult.headers };
+    }
+
+    return { success: true, status: 200, headers: rateResult.headers };
+  }
+
   filterTasksForShardExecution(taskIds) {
     if (!this.shardRing) {
       return {

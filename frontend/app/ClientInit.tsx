@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import * as Sentry from "@sentry/nextjs";
 import { instrumentFetch } from "@/src/lib/errors/fetchTracker";
 import { SYNC_TAG } from "@/src/lib/offline/backgroundSync";
 
@@ -13,26 +12,7 @@ export function ClientInit() {
     // Sentry is initialized in sentry.client.config.ts
     instrumentFetch();
 
-    // Issue #1240: register the offline-first service worker. Caching is
-    // implemented directly in public/sw.js (app shell, static assets and
-    // read-only task queries) with a graceful /offline fallback.
-    //
-    // Registration is not gated on NODE_ENV: the SW only ever caches
-    // same-origin GETs, and gating it meant the offline path could not be
-    // exercised outside a production build. The dev opt-in below keeps HMR
-    // safe for anyone who does not want it locally.
-    const wantsServiceWorker =
-      process.env.NEXT_PUBLIC_DISABLE_SW !== "true" &&
-      "serviceWorker" in navigator &&
-      (process.env.NODE_ENV === "production" ||
-        process.env.NEXT_PUBLIC_ENABLE_SW_IN_DEV === "true");
-
-    if (!wantsServiceWorker) return;
-
-    navigator.serviceWorker.register("/sw.js").catch((err) => {
-      console.warn("Service worker registration failed:", err);
-      Sentry.captureException?.(err);
-    });
+    if (!("serviceWorker" in navigator)) return;
 
     // The SW cannot replay writes by itself — the pending queue lives in
     // IndexedDB behind a typed API owned by OfflineSyncProvider. So when the

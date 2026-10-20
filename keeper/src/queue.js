@@ -392,6 +392,9 @@ class ExecutionQueue extends EventEmitter {
     // The graph is rebuilt each cycle from taskConfigMap dependency hints.
     this.dependencyGraph = opts.dependencyGraph || new DependencyGraph();
 
+    // #1445 — Distributed ZK proof generation worker cluster
+    this.zkProver = opts.zkProver || null;
+
     this.concurrencyLimit = parseInt(
       limit || process.env.MAX_CONCURRENT_EXECUTIONS || DEFAULT_CONCURRENCY,
       10,
@@ -1031,7 +1034,36 @@ class ExecutionQueue extends EventEmitter {
     // #847 — disconnect Kafka producer/consumer
     await this.kafkaStream.disconnect();
 
+    // #1445 — terminate ZK worker cluster
+    if (this.zkProver && typeof this.zkProver.terminate === 'function') {
+      await this.zkProver.terminate();
+    }
+
     this.logger.info('Execution queue shutdown complete');
+  }
+
+  /**
+   * Offload ZK proof generation to the background worker cluster (#1445).
+   * @param {object} task
+   * @returns {Promise<object>}
+   */
+  async processZKTask(task) {
+    if (!task || !task.requiresZKProof) {
+      return task;
+    }
+    if (!this.zkProver) {
+      const { ZKProverCluster } = require('./zk/prover');
+      this.zkProver = new ZKProverCluster();
+    }
+    const result = await this.zkProver.generateProof(
+      task.zkInput || task.input || {},
+      String(task.id || Date.now())
+    );
+    task.zkProof = result.proof;
+    task.zkPublicSignals = result.publicSignals;
+    task.zkDurationMs = result.durationMs;
+    this.emit('zkProofGenerated', { taskId: task.id, durationMs: result.durationMs });
+    return task;
   }
 
   getRetryStatistics() {
