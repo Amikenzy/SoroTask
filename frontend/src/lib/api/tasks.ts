@@ -585,6 +585,7 @@ export async function pauseTask(
     }
   } catch (err) {
     console.warn("pause_task contract call failed:", err);
+    throw err;
   }
 
   return { id, status: "pending" };
@@ -611,6 +612,7 @@ export async function resumeTask(
     }
   } catch (err) {
     console.warn("resume_task contract call failed:", err);
+    throw err;
   }
 
   return { id, status: "running" };

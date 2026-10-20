@@ -114,6 +114,7 @@ export default function RootLayout({
           >
             <AIAssistantProvider>
               <AppProviders>
+                <ClientInit />
                 <PriceTicker />
                 <CommandPalette />
                 <TransactionToasts />

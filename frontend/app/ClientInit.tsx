@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { instrumentFetch } from "@/src/lib/errors/fetchTracker";
 import { SYNC_TAG } from "@/src/lib/offline/backgroundSync";
+import { telemetry } from "@/src/lib/telemetry";
 
 /** Custom event used to hand a Background Sync trigger to the page. */
 export const REPLAY_QUEUE_EVENT = "sorotask:replay-queue";
@@ -12,6 +13,7 @@ export function ClientInit() {
   useEffect(() => {
     // Sentry is initialized in sentry.client.config.ts
     instrumentFetch();
+    const stopTelemetry = telemetry.initialize();
 
     // Issue #1240: register the offline-first service worker. Caching is
     // implemented directly in public/sw.js (app shell, static assets and
@@ -27,7 +29,7 @@ export function ClientInit() {
       (process.env.NODE_ENV === "production" ||
         process.env.NEXT_PUBLIC_ENABLE_SW_IN_DEV === "true");
 
-    if (!wantsServiceWorker) return;
+    if (!wantsServiceWorker) return stopTelemetry;
 
     navigator.serviceWorker.register("/sw.js").catch((err) => {
       console.warn("Service worker registration failed:", err);
@@ -45,8 +47,10 @@ export function ClientInit() {
     };
 
     navigator.serviceWorker.addEventListener("message", onMessage);
-    return () =>
+    return () => {
       navigator.serviceWorker.removeEventListener("message", onMessage);
+      stopTelemetry();
+    };
   }, []);
 
   return null;
