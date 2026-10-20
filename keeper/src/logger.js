@@ -10,6 +10,7 @@
 
 const pino = require('pino');
 const { extractOrCreateTraceContext, formatTraceParent } = require('../../scripts/traceContext');
+const { AuditLogger, getAuditLogger } = require('./auditLogger');
 
 const SENSITIVE_FIELDS = [
   'secret',
@@ -134,6 +135,9 @@ function createLogger(module) {
     fatal: (msg, meta = {}) => {
       child.fatal(meta, msg);
     },
+    audit: async (action, details = {}) => {
+      return await getAuditLogger().logAuditEntry(action, details);
+    },
     raw: child,
     childWithTrace: (correlationIdOrContext) => {
       let traceMeta = {};
@@ -167,6 +171,9 @@ function createTracedLogger(child, module) {
     },
     fatal: (msg, meta = {}) => {
       child.fatal(meta, msg);
+    },
+    audit: async (action, details = {}) => {
+      return await getAuditLogger().logAuditEntry(action, details);
     },
     raw: child,
     childWithTrace: (correlationIdOrContext) => {
@@ -216,4 +223,6 @@ module.exports = {
   normalizeLogLevel,
   SENSITIVE_FIELDS,
   injectW3CTraceContext,
+  AuditLogger,
+  getAuditLogger,
 };
