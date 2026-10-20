@@ -14,22 +14,26 @@
  * needs no build step.
  */
 
-const CACHE_VERSION = 'sorotask-v3';
+const CACHE_VERSION = 'sorotask-v4';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DATA_CACHE = `${CACHE_VERSION}-data`;
 
-const OFFLINE_URL = '/offline';
+const OFFLINE_URL = '/offline.html';
 
 /** Must match SYNC_TAG in src/lib/offline/backgroundSync.ts. */
 const SYNC_TAG = 'sorotask-offline-sync';
+const REQUEST_SYNC_TAG = 'sorotask-offline-requests';
+const REQUEST_DB_NAME = 'sorotask-background-sync';
+const REQUEST_DB_VERSION = 1;
+const REQUEST_STORE_NAME = 'requests';
 
 /** How long a navigation may hang before we serve the cached shell. */
 const NAVIGATION_TIMEOUT_MS = 3000;
 
 // Core app-shell requests pre-cached at install time.
 const CORE_ASSETS = [
-  '/',
   OFFLINE_URL,
+  '/offline.css',
   '/manifest.json',
   '/icons/icon-192x192.png',
   '/icons/icon-512x512.png',
@@ -120,26 +124,21 @@ async function putInCache(cacheName, request, response) {
   // Opaque and error responses are not worth persisting, and caching a 404
   // would pin a broken response for the whole cache lifetime.
   if (!response || !response.ok || response.type === 'opaque') return;
+  const cacheControl = response.headers.get('Cache-Control') || '';
+  if (/\b(?:private|no-store)\b/i.test(cacheControl) || response.headers.get('Vary') === '*') return;
+  if (cacheName === DATA_CACHE && !/\bpublic\b/i.test(cacheControl)) return;
   const cache = await caches.open(cacheName);
   await cache.put(request, response);
 }
 
 async function networkFirstDocument(request) {
-  const network = fetch(request)
-    .then(async (response) => {
-      await putInCache(STATIC_CACHE, request, response.clone());
-      return response;
-    })
-    .catch(() => null);
+  const network = fetch(request).catch(() => null);
 
   const raced = await withTimeout(network, NAVIGATION_TIMEOUT_MS, 'navigation').catch(() => null);
   if (raced) return raced;
 
   const cached = await caches.match(request, { cacheName: STATIC_CACHE });
   if (cached) return cached;
-
-  const shell = await caches.match('/', { cacheName: STATIC_CACHE });
-  if (shell) return shell;
 
   const offline = await caches.match(OFFLINE_URL, { cacheName: STATIC_CACHE });
   // Last resort: still answer 200 with something renderable rather than
@@ -221,8 +220,11 @@ self.addEventListener('fetch', (event) => {
  * ---------------------------------------------------------------------- */
 
 self.addEventListener('sync', (event) => {
-  if (event.tag !== SYNC_TAG) return;
-  event.waitUntil(notifyClientsToSync());
+  if (event.tag === SYNC_TAG) {
+    event.waitUntil(notifyClientsToSync());
+  } else if (event.tag === REQUEST_SYNC_TAG) {
+    event.waitUntil(flushQueuedRequests());
+  }
 });
 
 async function notifyClientsToSync() {
@@ -237,5 +239,214 @@ self.addEventListener('message', (event) => {
   // button) — same contract as the sync event.
   if (event.data && event.data.type === 'REPLAY_QUEUE') {
     event.waitUntil(notifyClientsToSync());
+    return;
   }
+  if (event.data?.type === 'QUEUE_BACKGROUND_REQUEST') {
+    const port = event.ports[0];
+    event.waitUntil(
+      storeQueuedRequest(event.data.request)
+        .then(registerRequestSync)
+        .then(() => port?.postMessage({ ok: true }))
+        .catch((error) => {
+          port?.postMessage({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Failed to queue request.',
+          });
+        })
+    );
+    return;
+  }
+  if (event.data?.type === 'FLUSH_BACKGROUND_REQUESTS') {
+    event.waitUntil(flushQueuedRequests());
+  }
+});
+
+function openRequestDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(REQUEST_DB_NAME, REQUEST_DB_VERSION);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(REQUEST_STORE_NAME)) {
+        request.result.createObjectStore(REQUEST_STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function storeQueuedRequest(request) {
+  const allowedMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
+  if (
+    !request ||
+    typeof request.id !== 'string' ||
+    !request.id.trim() ||
+    typeof request.url !== 'string' ||
+    !allowedMethods.includes(request.method)
+  ) {
+    throw new Error('Invalid offline request.');
+  }
+  const url = new URL(request.url, self.location.origin);
+  if (url.origin !== self.location.origin || !url.pathname.startsWith('/api/')) {
+    throw new Error('Offline requests must target a same-origin API route.');
+  }
+  const headers = request.headers ?? {};
+  if (
+    !headers ||
+    typeof headers !== 'object' ||
+    Array.isArray(headers) ||
+    !Object.entries(headers).every(([key, value]) => key && typeof value === 'string')
+  ) {
+    throw new Error('Offline request headers must be string values.');
+  }
+  if (request.body !== undefined && request.body !== null && typeof request.body !== 'string') {
+    throw new Error('Offline request body must be a string.');
+  }
+
+  const db = await openRequestDatabase();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(REQUEST_STORE_NAME, 'readwrite');
+      transaction.objectStore(REQUEST_STORE_NAME).put({
+        id: request.id,
+        url: url.href,
+        method: request.method,
+        headers,
+        body: request.body ?? null,
+        createdAt: Date.now(),
+      });
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function getQueuedRequests() {
+  const db = await openRequestDatabase();
+  try {
+    const requests = await new Promise((resolve, reject) => {
+      const transaction = db.transaction(REQUEST_STORE_NAME, 'readonly');
+      const getAll = transaction.objectStore(REQUEST_STORE_NAME).getAll();
+      getAll.onsuccess = () => resolve(getAll.result);
+      getAll.onerror = () => reject(getAll.error);
+    });
+    return requests.sort((left, right) => left.createdAt - right.createdAt);
+  } finally {
+    db.close();
+  }
+}
+
+async function removeQueuedRequest(id) {
+  const db = await openRequestDatabase();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(REQUEST_STORE_NAME, 'readwrite');
+      transaction.objectStore(REQUEST_STORE_NAME).delete(id);
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function flushQueuedRequests() {
+  const requests = await getQueuedRequests();
+  for (const request of requests) {
+    const response = await fetch(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      credentials: 'same-origin',
+    });
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        await removeQueuedRequest(request.id);
+        await notifyRequestClients({
+          type: 'BACKGROUND_REQUEST_FAILED',
+          id: request.id,
+          status: response.status,
+        });
+        continue;
+      }
+      throw new Error(`Background request failed with status ${response.status}.`);
+    }
+    await removeQueuedRequest(request.id);
+    await notifyRequestClients({ type: 'BACKGROUND_REQUEST_COMPLETED', id: request.id });
+  }
+}
+
+async function registerRequestSync() {
+  if ('sync' in self.registration) {
+    await self.registration.sync.register(REQUEST_SYNC_TAG);
+  } else if (self.navigator.onLine) {
+    await flushQueuedRequests();
+  }
+}
+
+async function notifyRequestClients(message) {
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const client of clients) client.postMessage(message);
+}
+
+self.addEventListener('push', (event) => {
+  let value = {};
+  try {
+    value = event.data ? event.data.json() : {};
+  } catch {
+    value = { body: event.data ? event.data.text() : '' };
+  }
+  const payload =
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+
+  const title =
+    typeof payload.title === 'string' ? payload.title : 'SoroTask alert';
+  const body =
+    typeof payload.body === 'string'
+      ? payload.body
+      : 'A critical SoroTask event requires your attention.';
+  let notificationUrl = null;
+  try {
+    if (typeof payload.url === 'string') {
+      notificationUrl = new URL(payload.url, self.location.origin);
+    }
+  } catch {
+    notificationUrl = null;
+  }
+  const url =
+    notificationUrl?.origin === self.location.origin
+      ? notificationUrl.pathname + notificationUrl.search + notificationUrl.hash
+      : '/';
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: '/icons/icon-192x192.png',
+      badge: '/icons/icon-192x192.png',
+      data: { url },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(
+    typeof event.notification.data?.url === 'string'
+      ? event.notification.data.url
+      : '/',
+    self.location.origin
+  );
+  const url =
+    target.origin === self.location.origin
+      ? target.pathname + target.search + target.hash
+      : '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);
+      if (!existing) return self.clients.openWindow(url);
+      return existing.navigate(url).then(() => existing.focus()).catch(() => existing.focus());
+    })
+  );
 });

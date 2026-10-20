@@ -40,9 +40,13 @@ const SCRIPT = [
   "}catch(e){}})();",
 ].join("");
 
-export function ThemeInitScript() {
+export function ThemeInitScript({ nonce }: { nonce?: string }) {
   // No `async`/`defer`: the whole point is to run before the first paint.
-  return <script suppressHydrationWarning>{SCRIPT}</script>;
+  return (
+    <script nonce={nonce} suppressHydrationWarning>
+      {SCRIPT}
+    </script>
+  );
 }
 
 export { SCRIPT as THEME_INIT_SCRIPT };
