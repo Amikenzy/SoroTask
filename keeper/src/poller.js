@@ -48,6 +48,7 @@ class TaskPoller {
     this.historyManager = options.historyManager || null;
     this.resolverRuntime = options.resolverRuntime || null;
     this.oracleAggregator = options.oracleAggregator || null;
+    this.fraudDetection = options.fraudDetection || null;
     this.resolverFailureMode = options.resolverFailureMode || process.env.RESOLVER_FAILURE_MODE || 'skip';
     this.shardLabel = options.shardLabel || null;
     this.driftWarningSeconds = parseInt(
@@ -689,6 +690,29 @@ class TaskPoller {
         }
       }
 
+      // #1464 — Real-Time Anomaly Detection & Flash Loan Quarantine Gate
+      let anomalyEvaluation = null;
+      if (isDue && this.fraudDetection) {
+        if (typeof this.fraudDetection.isTaskQuarantined === 'function' && this.fraudDetection.isTaskQuarantined(taskId)) {
+          isDue = false;
+          reason = 'quarantined_anomaly';
+        } else if (taskConfig.executionTelemetry && typeof this.fraudDetection.evaluateFlashLoanAnomaly === 'function') {
+          anomalyEvaluation = this.fraudDetection.evaluateFlashLoanAnomaly({
+            taskId,
+            ...taskConfig.executionTelemetry,
+          });
+          if (anomalyEvaluation.isAnomalous) {
+            isDue = false;
+            reason = 'quarantined_anomaly';
+            taskLogger.warn('Task auto-paused by anomaly detection engine before execution', {
+              taskId,
+              anomalyScore: anomalyEvaluation.anomalyScore,
+              reasons: anomalyEvaluation.reasons,
+            });
+          }
+        }
+      }
+
       return {
         isDue,
         taskId,
@@ -704,6 +728,7 @@ class TaskPoller {
         driftSeverity,
         resolver,
         oracle: oracleEvaluation,
+        anomaly: anomalyEvaluation,
       };
 
     } catch (error) {
