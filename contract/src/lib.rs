@@ -19,6 +19,32 @@ pub mod upgrade;
 pub use gas::{get_gas_rates, update_gas_rates, EscrowManager, FeeBreakdown, GasMeter};
 pub use optimistic::{FraudProof, OptimisticClaim, CHALLENGE_WINDOW_LEDGERS};
 pub use state_channel::{ChannelCloseRequest, ChannelReceipt, ChannelState, ChannelStatus};
+pub use trailing_stop_loss::{
+    TrailingOrderConfig, TrailingOrderExecution, TrailingOrderStatus,
+    create_trailing_order, update_trailing_order, cancel_trailing_order,
+    get_trailing_order, get_trailing_order_execution, batch_update_trailing_orders,
+};
+pub use merkle_state_channel::{
+    MerkleChannelState, ChannelSubState, MerkleProof, MerkleExitClaim,
+    open_merkle_channel, submit_closing_state, initiate_unilateral_exit,
+    challenge_unilateral_exit, submit_merkle_exit_claim, withdraw_merkle_exit,
+    apply_timeout_penalty, get_merkle_channel_state, get_channel_substate,
+    get_merkle_exit_claim, MERKLE_CHALLENGE_WINDOW_SECONDS,
+};
+pub use protocol_insurance::{
+    ProtocolInsuranceClaim, UnderwriterStake, RiskTranche, InsurancePoolStats,
+    InsuranceClaimStatus, ClaimRiskLevel,
+    stake_as_underwriter, unstake_as_underwriter, submit_insurance_claim,
+    certify_insurance_claim, process_insurance_claim, reject_insurance_claim,
+    accrue_protocol_fees, claim_underwriter_rewards, get_insurance_pool_stats,
+    get_insurance_claim, get_underwriter_stake, get_risk_tranches,
+};
+pub use gas_refund::{
+    GasConsumptionRecord, YieldAccumulator, DustRecord, GasPriceConfig, GasUsageStats,
+    record_gas_consumption, sweep_task_dust, batch_sweep_dust,
+    harvest_yield_accumulator, get_accumulator_balance, get_gas_usage_stats,
+    get_task_dust, get_gas_consumption_record, update_gas_price_config, estimate_refund,
+};
 pub use storage::{ExecutionLog, TaskMeta, TaskPayload, TaskStats};
 pub use upgrade::{UpgradeProposal, UPGRADE_TIMELOCK_SECONDS};
 
@@ -1330,6 +1356,50 @@ pub enum DataKey {
     ZkProofRecord(u64),
     /// Counter for sequential ZK proof records
     ZkProofCounter,
+    // ========== SC-PROD-39: Trailing Stop-Loss Order Manager ==========
+    /// Trailing order counter
+    TrailingOrderCounter,
+    /// Trailing stop-loss order configuration (order_id -> config)
+    TrailingOrder(u64),
+    /// Trailing order execution record
+    TrailingOrderExecution(u64),
+    // ========== SC-PROD-38: Merkle State Channel ==========
+    /// Merkle channel counter
+    MerkleChannelCounter,
+    /// Merkle-enabled channel state
+    MerkleChannelState(u64),
+    /// Channel sub-state for Merkle proofs (channel_id, nonce)
+    ChannelSubState(u64, u64),
+    /// Merkle exit claim (channel_id, claimant)
+    MerkleExitClaim(u64, Address),
+    /// Timeout penalty record
+    TimeoutPenalty(u64, Address),
+    // ========== SC-PROD-40: Protocol Insurance Fund ==========
+    /// Protocol insurance claim (claim_id -> claim)
+    ProtocolInsuranceClaim(u64),
+    /// Protocol claim counter
+    ProtocolClaimCounter,
+    /// Insurance underwriter stake
+    InsuranceUnderwriter(Address),
+    /// Total insurance underwriter stake
+    TotalInsuranceUnderwriterStake,
+    /// Insurance pool statistics
+    InsurancePoolStats,
+    /// Risk tranches for insurance waterfall
+    InsuranceTranches,
+    /// Tranche initialization flag
+    InsuranceTrancheInitialized,
+    // ========== SC-PROD-35: Gas Refund & Dust Sweeper ==========
+    /// Gas consumption record (task_id, sequence)
+    GasConsumption(u64, u32),
+    /// Task dust record
+    TaskDust(u64),
+    /// Yield accumulator (creator, name)
+    YieldAccumulator(Address, Bytes),
+    /// Gas price configuration
+    GasPriceConfig,
+    /// Gas usage statistics
+    GasUsageStats,
 }
 
 /// Transient storage reentrancy guard ensuring reentrant calls revert immediately.
@@ -1354,6 +1424,11 @@ pub mod ccip;
 pub mod mempool;
 pub mod resolver;
 pub mod security;
+pub mod trailing_stop_loss;
+pub mod merkle_state_channel;
+pub mod protocol_insurance;
+pub mod gas_refund;
+
 #[cfg(test)]
 mod test_commit_reveal;
 pub mod zk;
